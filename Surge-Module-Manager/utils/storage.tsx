@@ -1,0 +1,537 @@
+import { Path } from "scripting"
+import { loadConfig } from "./config"
+
+export type ModuleInfo = {
+  name: string
+  link: string
+  surgeName?: string
+  category?: string
+  icon?: string
+  filePath?: string
+  saveDir?: string
+  isLocal?: boolean
+  content?: string
+}
+
+const BASE_DIR_NAME = "SurgeModulesManager"
+const MODULES_DIR_NAME = "Modules"
+const BUILTIN_LINK_PREFIXES = ["#!url=", "#SUBSCRIBED"]
+
+function fmOrThrow(): any {
+  const fm = (globalThis as any).FileManager
+  if (!fm) throw new Error("FileManager 不可用")
+  return fm
+}
+
+function isPromiseLike(v: any): v is Promise<any> {
+  return !!v && typeof v === "object" && typeof v.then === "function"
+}
+
+async function callMaybeAsync(fn: any, thisArg: any, args: any[]) {
+  try {
+    const r = fn.apply(thisArg, args)
+    return isPromiseLike(r) ? await r : r
+  } catch {
+    return undefined
+  }
+}
+
+function normalizePath(path: string): string {
+  return String(path ?? "").replace(/\/+$/, "")
+}
+
+function pickRootDir(): string {
+  const fm = fmOrThrow()
+  if (fm.isiCloudEnabled && fm.iCloudDocumentsDirectory) {
+    return fm.iCloudDocumentsDirectory
+  }
+  return fm.documentsDirectory || fm.appGroupDocumentsDirectory || fm.scriptsDirectory || ""
+}
+
+export function getBaseDir(): string {
+  const cfg = loadConfig()
+  if (cfg.baseDir) return cfg.baseDir
+  return Path.join(pickRootDir(), BASE_DIR_NAME)
+}
+
+export function getModulesDir(): string {
+  const cfg = loadConfig()
+  if (cfg.baseDir) return cfg.baseDir
+  return Path.join(getBaseDir(), MODULES_DIR_NAME)
+}
+
+async function resolveBookmarkedPath(rawPath: string, bookmarkName?: string): Promise<string> {
+  const fm = fmOrThrow()
+  const raw = String(rawPath ?? "").trim()
+  const name = String(bookmarkName ?? "").trim()
+  if (!raw && !name) return ""
+  if (!fm?.bookmarkedPath) return raw
+
+  if (name) {
+    let nameExists = true
+    if (fm?.bookmarkExists) {
+      const existed = await callMaybeAsync(fm.bookmarkExists, fm, [name])
+      nameExists = !!existed
+    }
+    if (nameExists) {
+      const byName = await callMaybeAsync(fm.bookmarkedPath, fm, [name])
+      if (byName) return String(byName)
+    }
+  }
+  if (!fm?.getAllFileBookmarks) return raw
+
+  const list = await callMaybeAsync(fm.getAllFileBookmarks, fm, [])
+  const arr = Array.isArray(list) ? list : []
+  const target = normalizePath(raw)
+  const match = arr.find((b: any) => {
+    const p = normalizePath(String(b?.path ?? ""))
+    const n = String(b?.name ?? "")
+    return (p && p === target) || (name ? n === name : false)
+  })
+  if (match?.name) {
+    const resolved = await callMaybeAsync(fm.bookmarkedPath, fm, [match.name])
+    if (resolved) return String(resolved)
+  }
+
+  // If bookmark name is configured but cannot be resolved, do not trust stale raw path.
+  if (name) return ""
+  return raw
+}
+
+export async function getModulesDirResolved(baseDir?: string): Promise<string> {
+  const cfg = loadConfig()
+  const configured = String(cfg.baseDir ?? "").trim()
+  const bookmarkName = String(cfg.baseBookmarkName ?? "").trim()
+  const target = String(baseDir ?? "").trim()
+  if (!configured && !target) return getModulesDir()
+
+  if (!target) {
+    if (!configured) return getModulesDir()
+    const resolved = await resolveBookmarkedPath(configured, bookmarkName)
+    if (resolved) return resolved
+    return bookmarkName ? "" : configured
+  }
+
+  if (configured && normalizePath(target) === normalizePath(configured)) {
+    const resolved = await resolveBookmarkedPath(target, bookmarkName)
+    if (resolved) return resolved
+    return bookmarkName ? "" : target
+  }
+  return target
+}
+
+async function exists(path: string): Promise<boolean> {
+  const fm = fmOrThrow()
+  if (typeof fm.exists === "function") return !!(await fm.exists(path))
+  if (typeof fm.existsSync === "function") return !!fm.existsSync(path)
+  return false
+}
+
+async function ensureDir(dir: string): Promise<void> {
+  const fm = fmOrThrow()
+  if (await exists(dir)) return
+  if (typeof fm.createDirectory === "function") {
+    await fm.createDirectory(dir, true)
+    return
+  }
+  if (typeof fm.createDirectorySync === "function") {
+    fm.createDirectorySync(dir, true)
+    return
+  }
+  throw new Error("FileManager.createDirectory 不可用")
+}
+
+export async function ensureStorage(): Promise<void> {
+  const cfg = loadConfig()
+  if (cfg.baseDir) {
+    const resolved = await getModulesDirResolved(cfg.baseDir)
+    if (!resolved) {
+      throw new Error("书签路径不可用，请在设置页重新选择书签文件夹")
+    }
+    await ensureDir(resolved)
+    return
+  }
+  await ensureDir(getBaseDir())
+  if (!cfg.baseDir) {
+    await ensureDir(getModulesDir())
+  }
+}
+
+function extractNameFromPath(p: string): string {
+  const base = String(p).split("/").pop() ?? String(p)
+  return base.replace(/\.sgmodule$/i, "")
+}
+
+function parseTag(content: string, key: string): string | undefined {
+  const re = new RegExp(`^\\s*#!\\s*${key}\\s*=\\s*(.*)$`, "im")
+  const m = content.match(re)
+  return m?.[1]?.trim()
+}
+
+function parseIcon(content: string): string | undefined {
+  const lines = String(content ?? "").split(/\r?\n/g)
+  for (const raw of lines) {
+    const m = raw.match(/^\s*#\s*!?\s*icon\s*(?:=|\s)\s*(.+)$/i)
+    const value = m?.[1]?.trim()
+    if (value) return value
+  }
+  return undefined
+}
+
+export function getLinkPrefixes(): string[] {
+  const cfg = loadConfig()
+  const raw = String(cfg.linkPatternsText ?? "").split(/\r?\n/g)
+  const configured = raw
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    // A hostname is not a metadata prefix. Ignore it instead of allowing a
+    // setting such as `http://script.hub` to shadow/erase real link markers.
+    .filter((s) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(s))
+  return Array.from(new Set([...configured, ...BUILTIN_LINK_PREFIXES]))
+}
+
+export function formatLinkLine(prefix: string, url: string): string {
+  const p = String(prefix ?? "").trim()
+  const u = String(url ?? "").trim()
+  if (/^#SUBSCRIBED$/i.test(p)) return `${p} ${u}`
+  return `${p}${u}`
+}
+
+function parseLinkFromContent(content: string, prefixes: string[]): string {
+  const lines = String(content ?? "").split(/\r?\n/g)
+  for (const lineRaw of lines) {
+    const line = lineRaw.trimStart()
+    for (const prefix of prefixes) {
+      if (line.startsWith(prefix)) {
+        return line.slice(prefix.length).trim()
+      }
+    }
+  }
+  return ""
+}
+
+export function detectLinkPrefixFromContent(content: string, prefixes: string[]): string | undefined {
+  const lines = String(content ?? "").split(/\r?\n/g)
+  for (const lineRaw of lines) {
+    const line = lineRaw.trimStart()
+    const hit = prefixes.find((p) => line.startsWith(p))
+    if (hit) return hit
+  }
+  return undefined
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  const fm = fmOrThrow()
+  if (typeof fm.isDirectory === "function") return !!(await fm.isDirectory(path))
+  if (typeof fm.isDir === "function") return !!(await fm.isDir(path))
+  return false
+}
+
+async function listModuleFilesRecursive(dir: string): Promise<string[]> {
+  const fm = fmOrThrow()
+  const list = await fm.readDirectory(dir)
+  if (!Array.isArray(list)) return []
+  const files: string[] = []
+  for (const entry of list) {
+    const raw = String(entry)
+    const full = raw.includes("/") ? raw : Path.join(dir, raw)
+    if (await isDirectory(full)) {
+      const sub = await listModuleFilesRecursive(full)
+      files.push(...sub)
+      continue
+    }
+    if (!full.toLowerCase().endsWith(".sgmodule")) continue
+    files.push(full)
+  }
+  return files
+}
+
+export async function loadModules(): Promise<ModuleInfo[]> {
+  await ensureStorage()
+  const dir = await getModulesDirResolved()
+
+  const modules: ModuleInfo[] = []
+  const files = await listModuleFilesRecursive(dir)
+  for (const path of files) {
+    const item = await readModuleInfo(path)
+    if (item) modules.push(item)
+  }
+  return modules
+}
+
+export function moduleFilePath(moduleName: string, dir?: string): string {
+  const base = dir ?? getModulesDir()
+  return Path.join(base, `${moduleName}.sgmodule`)
+}
+
+async function readModuleInfo(path: string): Promise<ModuleInfo | null> {
+  const fm = fmOrThrow()
+  if (!(await exists(path))) return null
+
+  const name = extractNameFromPath(path)
+  if (!name) return null
+
+  let text = ""
+  try {
+    text = await fm.readAsString(path)
+  } catch {
+    text = ""
+  }
+
+  const link = parseLinkFromContent(text, getLinkPrefixes())
+  const localTag = parseTag(text, "local")
+  const hasLocalTag =
+    localTag != null &&
+    String(localTag).trim() !== "" &&
+    !["0", "false", "no"].includes(String(localTag).trim().toLowerCase())
+  const isLocal = hasLocalTag || !link
+  const category = parseTag(text, "category") ?? parseTag(text, "cagegory") ?? undefined
+  const surgeName = parseTag(text, "name") ?? undefined
+  const icon = parseTag(text, "icon") ?? parseIcon(text)
+  return { name, link, surgeName, category, icon, filePath: path, isLocal, content: text }
+}
+
+/**
+ * Read one known destination without recursively walking the whole bookmark.
+ * Script-Hub imports always target the selected bookmark root, and a full
+ * iCloud directory walk can block an Intent for a long time.
+ */
+export async function loadModuleAtPath(path: string): Promise<ModuleInfo | null> {
+  return readModuleInfo(path)
+}
+
+function resolveModulePath(target: ModuleInfo | string): string {
+  if (typeof target === "string") return moduleFilePath(target)
+  return target.filePath ?? moduleFilePath(target.name)
+}
+
+export async function moveModuleFile(
+  target: ModuleInfo | string,
+  nextDir?: string,
+  nextName?: string
+): Promise<string> {
+  const fm = fmOrThrow()
+  const from = resolveModulePath(target)
+  const name = String(nextName ?? (typeof target === "string" ? target : target.name)).trim()
+  const baseDir = nextDir ?? Path.dirname(from)
+  const to = moduleFilePath(name, baseDir)
+
+  if (normalizePath(from) === normalizePath(to)) return to
+  await ensureDir(baseDir)
+  if (!(await exists(from))) return to
+
+  if (typeof fm.rename === "function") {
+    await fm.rename(from, to)
+    return to
+  }
+  if (typeof fm.renameSync === "function") {
+    fm.renameSync(from, to)
+    return to
+  }
+  throw new Error("FileManager.rename 不可用")
+}
+
+export async function detectLinkPrefix(target: ModuleInfo | string): Promise<string | undefined> {
+  const fm = fmOrThrow()
+  const path = resolveModulePath(target)
+  if (!(await exists(path))) return undefined
+  const raw = await fm.readAsString(path)
+  return detectLinkPrefixFromContent(String(raw ?? ""), getLinkPrefixes())
+}
+
+export async function removeModuleFile(target: ModuleInfo | string): Promise<void> {
+  const fm = fmOrThrow()
+  const path = resolveModulePath(target)
+  if (!(await exists(path))) return
+  if (typeof fm.remove === "function") {
+    await fm.remove(path)
+    return
+  }
+  if (typeof fm.removeSync === "function") {
+    fm.removeSync(path)
+    return
+  }
+  throw new Error("FileManager.remove 不可用")
+}
+
+export async function renameModuleFile(oldTarget: ModuleInfo | string, newName: string): Promise<void> {
+  const fm = fmOrThrow()
+  const from = resolveModulePath(oldTarget)
+  const to = Path.join(Path.dirname(from), `${newName}.sgmodule`)
+  if (!(await exists(from))) return
+  if (typeof fm.rename === "function") {
+    await fm.rename(from, to)
+    return
+  }
+  if (typeof fm.renameSync === "function") {
+    fm.renameSync(from, to)
+    return
+  }
+  throw new Error("FileManager.rename 不可用")
+}
+
+function upsertTag(content: string, key: string, value?: string): string {
+  const trimmed = String(value ?? "").trim()
+  if (!trimmed) {
+    return content.replace(new RegExp(`^\\s*#!\\s*${key}\\s*=.*\\n?`, "im"), "")
+  }
+  const line = `#!${key}=${trimmed}`
+  const re = new RegExp(`^\\s*#!\\s*${key}\\s*=.*$`, "im")
+  if (re.test(content)) return content.replace(re, line)
+  return `${line}\n${content}`
+}
+
+function upsertLink(content: string, prefixes: string[], value?: string): string {
+  const trimmed = String(value ?? "").trim()
+  if (!trimmed) return content
+  const lines = String(content ?? "").split(/\r?\n/g)
+  let matchedPrefix: string | undefined
+  const filtered = lines.filter((line) => {
+    const t = line.trimStart()
+    const hit = prefixes.find((p) => t.startsWith(p))
+    if (hit && !matchedPrefix) matchedPrefix = hit
+    return !hit
+  })
+  const prefix = matchedPrefix ?? prefixes[0] ?? "#url="
+  return `${formatLinkLine(prefix, trimmed)}\n${filtered.join("\n")}`
+}
+
+export async function updateModuleMetadata(
+  target: ModuleInfo | string,
+  info: { link?: string; category?: string; icon?: string; local?: boolean }
+) {
+  const fm = fmOrThrow()
+  const path = resolveModulePath(target)
+  if (!(await exists(path))) return
+  const raw = await fm.readAsString(path)
+  let content = String(raw ?? "")
+  content = upsertLink(content, getLinkPrefixes(), info.link)
+  content = upsertTag(content, "category", info.category)
+  if (info.icon !== undefined) {
+    content = upsertTag(content, "icon", info.icon)
+  }
+  if (info.local !== undefined) {
+    content = upsertTag(content, "local", info.local ? "true" : "")
+  }
+  await fm.writeAsString(path, content)
+}
+
+export async function saveLocalModule(info: ModuleInfo, rawContent: string): Promise<void> {
+  await ensureStorage()
+  const fm = fmOrThrow()
+  if (!fm?.writeAsString) throw new Error("FileManager.writeAsString 不可用")
+  const targetDir = info.saveDir ?? (await getModulesDirResolved())
+  await ensureDir(targetDir)
+  const path = moduleFilePath(info.name, targetDir)
+  let content = String(rawContent ?? "")
+  content = upsertTag(content, "local", "true")
+  content = upsertTag(content, "category", info.category)
+  await fm.writeAsString(path, content)
+}
+
+export async function listDirectSubDirs(baseDir?: string): Promise<string[]> {
+  const fm = fmOrThrow()
+  const root = await getModulesDirResolved(baseDir)
+  const list = await fm.readDirectory(root)
+  if (!Array.isArray(list)) return []
+  const dirs: string[] = []
+  for (const entry of list) {
+    const raw = String(entry)
+    const full = raw.includes("/") ? raw : Path.join(root, raw)
+    const name = raw.includes("/") ? raw.split("/").pop() ?? raw : raw
+    if (!name || name.startsWith(".")) continue
+    if (name === "__pycache__" || name === "__pypackages__") continue
+    if (await isDirectory(full)) dirs.push(full)
+  }
+  return dirs
+}
+
+export async function loadCategoriesFromModules(baseDir?: string): Promise<{
+  categories: string[]
+  scanned: number
+  added: number
+}> {
+  const fm = fmOrThrow()
+  const primaryDir = await getModulesDirResolved(baseDir)
+  const altDir = baseDir ? Path.join(primaryDir, MODULES_DIR_NAME) : undefined
+  let files: string[] = []
+  if (await exists(primaryDir)) {
+    files = await listModuleFilesRecursive(primaryDir)
+  }
+  if (!files.length && altDir && (await exists(altDir))) {
+    files = await listModuleFilesRecursive(altDir)
+  }
+  const set = new Set<string>()
+  for (const path of files) {
+    let text = ""
+    try {
+      text = await fm.readAsString(path)
+    } catch {
+      text = ""
+    }
+    const cat = parseTag(text, "category") ?? parseTag(text, "cagegory")
+    if (cat) set.add(cat)
+  }
+  const categories = Array.from(set)
+  return { categories, scanned: files.length, added: categories.length }
+}
+
+export async function renameCategoryInModules(oldName: string, newName: string, baseDir?: string): Promise<void> {
+  const fm = fmOrThrow()
+  const primaryDir = await getModulesDirResolved(baseDir)
+  const altDir = baseDir ? Path.join(primaryDir, MODULES_DIR_NAME) : undefined
+  let files: string[] = []
+  if (await exists(primaryDir)) {
+    files = await listModuleFilesRecursive(primaryDir)
+  }
+  if (!files.length && altDir && (await exists(altDir))) {
+    files = await listModuleFilesRecursive(altDir)
+  }
+  for (const path of files) {
+    let text = ""
+    try {
+      text = await fm.readAsString(path)
+    } catch {
+      continue
+    }
+    const cat = parseTag(text, "category")
+    if (!cat || cat !== oldName) continue
+    let content = upsertTag(text, "category", newName)
+    await fm.writeAsString(path, content)
+  }
+}
+
+export async function countModulesByCategory(baseDir?: string): Promise<Record<string, number>> {
+  const fm = fmOrThrow()
+  const primaryDir = await getModulesDirResolved(baseDir)
+  const altDir = baseDir ? Path.join(primaryDir, MODULES_DIR_NAME) : undefined
+  let files: string[] = []
+  if (await exists(primaryDir)) {
+    files = await listModuleFilesRecursive(primaryDir)
+  }
+  if (!files.length && altDir && (await exists(altDir))) {
+    files = await listModuleFilesRecursive(altDir)
+  }
+  const counts: Record<string, number> = {}
+  for (const path of files) {
+    let text = ""
+    try {
+      text = await fm.readAsString(path)
+    } catch {
+      text = ""
+    }
+    const cat = parseTag(text, "category") ?? parseTag(text, "cagegory") ?? ""
+    if (!cat) continue
+    counts[cat] = (counts[cat] ?? 0) + 1
+  }
+  return counts
+}
+
+export function sortModules(list: ModuleInfo[]): ModuleInfo[] {
+  return [...list].sort((a, b) => {
+    const ca = String(a.category ?? "")
+    const cb = String(b.category ?? "")
+    if (ca !== cb) return ca.localeCompare(cb)
+    return a.name.localeCompare(b.name)
+  })
+}
