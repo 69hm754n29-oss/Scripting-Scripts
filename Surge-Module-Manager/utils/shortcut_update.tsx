@@ -11,8 +11,8 @@ import {
   sortModules,
   type ModuleInfo,
 } from "./storage"
-import { downloadModule } from "./downloader"
-import { isSameRemoteUrl, parseScriptHubImport } from "./deep_link_import"
+import { downloadModule, writeModuleText } from "./downloader"
+import { isSameRemoteUrl, parseScriptHubImport, sanitizeModuleName } from "./deep_link_import"
 import { withTimeout } from "./async"
 
 type ShortcutOptions = {
@@ -25,6 +25,7 @@ type ShortcutOptions = {
 export type ShortcutUpdateInput = {
   shortcutParameter?: ShortcutParameter
   textsParameter?: string[]
+  fileURLsParameter?: string[]
   queryParameters?: Record<string, any> | null
 }
 
@@ -122,6 +123,91 @@ function formatOptions(options: ShortcutOptions): string {
   })
 }
 
+function localPathFromFileURL(raw: unknown): string {
+  const value = String(raw ?? "").trim()
+  if (!value) throw new Error("本地文件路径为空")
+  if (!/^file:\/\//i.test(value)) return value
+
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error("本地文件 URL 无效")
+  }
+  if (url.hostname && url.hostname.toLowerCase() !== "localhost") {
+    throw new Error("只允许导入本机文件")
+  }
+  return decodeURIComponent(url.pathname)
+}
+
+function localModuleName(filePath: string): string {
+  const filename = decodeURIComponent(String(filePath).split("/").pop() ?? "")
+  return sanitizeModuleName(filename || "本地模块")
+}
+
+async function runLocalFileImport(
+  fileURLs: string[] | undefined,
+  log: Logger,
+): Promise<ShortcutUpdateResult | null> {
+  const files = fileURLs ?? []
+  const rawSource = files[0]
+  if (!rawSource) return null
+  if (files.length > 1) log(`local file input: ${files.length} files, importing the first one`)
+
+  const fm: any = (globalThis as any).FileManager
+  if (!fm?.readAsString) throw new Error("FileManager.readAsString 不可用")
+
+  const sourcePath = localPathFromFileURL(rawSource)
+  const name = localModuleName(sourcePath)
+  log(`local file import requested: ${name}`)
+  log("local import stage: resolving bookmarked folder")
+  await withTimeout(
+    () => ensureStorage(),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `访问书签目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s），请确认 Surge iCloud 目录已授权并可用`,
+  )
+  const baseDir = await withTimeout(
+    () => getModulesDirResolved(),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `解析书签目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s），请重新选择 Surge 目录`,
+  )
+  if (!baseDir) throw new Error("书签路径不可用，请在设置页重新选择书签文件夹")
+
+  log(`local import stage: reading ${name}`)
+  const content = await withTimeout(
+    () => fm.readAsString(sourcePath),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `读取本地模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
+  )
+  const targetPath = moduleFilePath(name, baseDir)
+  const existing = await withTimeout(
+    () => loadModuleAtPath(targetPath),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `读取目标模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${targetPath}`,
+  )
+  const result = await withTimeout(
+    () => writeModuleText(
+      {
+        name,
+        link: "",
+        category: existing?.category,
+        saveDir: baseDir,
+      },
+      baseDir,
+      String(content ?? ""),
+    ),
+    IMPORT_TOTAL_TIMEOUT_MS,
+    `本地模块写入超时（${IMPORT_TOTAL_TIMEOUT_MS / 1000}s）：${targetPath}`,
+  )
+  if (!result.ok) throw new Error(result.message ?? "本地模块写入失败")
+
+  log(`local import stage: write verified at ${result.path ?? "unknown"}`)
+  return {
+    text: `Surge 本地模块${existing ? "已覆盖" : "已导入"}：${name}\n写入路径：${result.path ?? "未返回路径"}\n请回到 Surge 刷新或重新启用该本地模块。`,
+    logs: [],
+  }
+}
+
 async function runScriptHubImport(
   queryParameters: Record<string, any> | null | undefined,
   log: Logger
@@ -129,7 +215,7 @@ async function runScriptHubImport(
   const request = parseScriptHubImport(queryParameters)
   if (!request) return null
 
-  log(`Script-Hub import requested: name=${request.name}`)
+  log(`Script-Hub import requested: name=${request.name}, url=${/^https?:\/\/script\.hub\//i.test(request.url) ? "script.hub" : "https"}`)
   log("import stage: resolving bookmarked folder")
   await withTimeout(
     () => ensureStorage(),
@@ -201,6 +287,9 @@ export async function runShortcutUpdate(input: ShortcutUpdateInput = {}): Promis
     // import before its stage timeouts are installed.
     const importResult = await runScriptHubImport(input.queryParameters, log)
     if (importResult) return importResult
+
+    const localFileResult = await runLocalFileImport(input.fileURLsParameter, log)
+    if (localFileResult) return localFileResult
 
     const cfg = loadConfig()
     log(`config loaded: concurrency=${cfg.downloadConcurrency}, bookmark=${cfg.baseBookmarkName || "none"}`)

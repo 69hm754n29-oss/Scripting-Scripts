@@ -48,7 +48,13 @@ export function loadConfig(): AppConfig {
   try {
     const raw = st?.get?.(KEY) ?? st?.getString?.(KEY)
     if (!raw) return DEFAULT_CONFIG
-    const obj = JSON.parse(raw)
+    // Scripting Storage.set/get supports JSON values directly. Older builds
+    // of this script stored a JSON string, so accept both representations.
+    // Parsing every value as a string silently discarded a valid bookmark
+    // configuration and made imports fall back to Scripting's own iCloud
+    // directory instead of the Surge bookmark.
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return DEFAULT_CONFIG
     const categories = normalizeCategories(obj?.categories ?? [])
     const baseDir = String(obj?.baseDir ?? "").trim()
     const baseBookmarkName = String(obj?.baseBookmarkName ?? "").trim()
@@ -89,10 +95,18 @@ export function saveConfig(cfg: AppConfig): void {
     remotePort: String(cfg.remotePort ?? DEFAULT_CONFIG.remotePort).trim() || DEFAULT_CONFIG.remotePort,
     remotePassword: String(cfg.remotePassword ?? ""),
   }
-  const raw = JSON.stringify(fixed)
-  if (st?.set) st.set(KEY, raw)
-  else if (st?.setString) st.setString(KEY, raw)
-  else throw new Error("Storage API 不存在：请确认 Scripting 是否提供 Storage.set/get")
+  if (st?.set) {
+    // Storage officially supports JSON values and returns a success flag.
+    // Keep the object typed in the current format; loadConfig still accepts
+    // the JSON string used by older builds.
+    const ok = st.set(KEY, fixed)
+    if (ok === false) throw new Error("Storage.set 保存配置失败")
+  } else if (st?.setString) {
+    const ok = st.setString(KEY, JSON.stringify(fixed))
+    if (ok === false) throw new Error("Storage.setString 保存配置失败")
+  } else {
+    throw new Error("Storage API 不存在：请确认 Scripting 是否提供 Storage.set/get")
+  }
 }
 
 export function addCategory(cfg: AppConfig, name: string): AppConfig {

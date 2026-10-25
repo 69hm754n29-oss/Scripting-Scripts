@@ -8,11 +8,46 @@ export type ScriptHubImportRequest = {
 
 type QueryParameters = Record<string, any>
 
+function isScriptHubResultURL(value: unknown): boolean {
+  const raw = String(value ?? "").trim()
+  return /^https?:\/\/script\.hub\/(?:file|convert)\//i.test(raw)
+}
+
+function decodeParameter(value: unknown, mode: "url" | "text" = "text"): string {
+  const raw = String(value ?? "").trim()
+  if (!raw) return ""
+
+  // URLSearchParams normally decodes these values for us. Some older
+  // Scripting/Share-sheet bridges pass the raw percent-encoded value instead.
+  // For a URL, decode only values that are clearly encoded as a whole; do not
+  // decode an already-valid URL containing percent-encoded characters in its
+  // path. Text fields can safely decode any percent escape, e.g. `Script%20Hub`.
+  const looksEncodedURL = /^(?:https?|scripting)%3A/i.test(raw)
+  const shouldDecode = mode === "url"
+    ? looksEncodedURL || /^%(?:[0-9a-f]{2})/i.test(raw)
+    : /%(?:[0-9a-f]{2})/i.test(raw)
+  if (!shouldDecode) return raw
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
 export function isScriptHubImport(query: Record<string, any> | null | undefined): boolean {
   // `url` is treated by Scripting as a shared URL payload before it reaches a
   // target script. Script-Hub therefore uses namespaced query keys. Keep the
   // old action key readable for hand-crafted/backward-compatible invocations.
-  return String(query?.sh_action ?? query?.action ?? "") === SCRIPT_HUB_IMPORT_ACTION
+  const action = decodeParameter(query?.sh_action ?? query?.action ?? "")
+  if (action === SCRIPT_HUB_IMPORT_ACTION) return true
+
+  // Scriptable enters the URL-scheme path when `args.queryParameters.url` is
+  // present; it does not require an action flag.  Accept the same shape for
+  // Scripting, while limiting the no-action fallback to Script-Hub result
+  // URLs so an unrelated `scripting://run/...?...url=` call is not treated as
+  // a module import.
+  const candidate = query?.sh_module_url ?? query?.module_url ?? query?.url
+  return isScriptHubResultURL(decodeParameter(candidate, "url"))
 }
 
 function queryParametersFromURL(value: unknown): QueryParameters | null {
@@ -32,7 +67,8 @@ function queryParametersFromURL(value: unknown): QueryParameters | null {
     parsed.searchParams.forEach((item, key) => {
       query[key] = item
     })
-    return query
+    if (Object.keys(query).length) return query
+    return isScriptHubResultURL(raw) ? { url: raw } : null
   } catch {
     // Some Intent/Shortcut bridges forward only the query string instead of
     // the complete scripting:// URL. Accept both `?a=1` and `a=1&b=2`.
@@ -46,6 +82,17 @@ function queryParametersFromURL(value: unknown): QueryParameters | null {
     } catch {
       return null
     }
+  }
+}
+
+function deriveModuleNameFromURL(rawURL: string): string {
+  try {
+    const parsed = new URL(rawURL)
+    const last = parsed.pathname.split("/").filter(Boolean).pop() ?? ""
+    const decoded = decodeURIComponent(last).replace(/\.sgmodule$/i, "").trim()
+    return decoded
+  } catch {
+    return ""
   }
 }
 
@@ -90,6 +137,7 @@ export function resolveScriptHubQueryParameters(
 
     const parsed = queryParametersFromURL(value)
     if (parsed && isScriptHubImport(parsed)) return parsed
+    if (isScriptHubResultURL(value)) return { url: String(value).trim() }
   }
 
   return (direct && typeof direct === "object" ? direct : {}) as QueryParameters
@@ -137,10 +185,21 @@ export function normalizeModuleUrl(value: unknown): string {
 
 export function parseScriptHubImport(query: Record<string, any> | null | undefined): ScriptHubImportRequest | null {
   if (!isScriptHubImport(query)) return null
+  const url = normalizeModuleUrl(
+    decodeParameter(query?.sh_module_url ?? query?.module_url ?? query?.url, "url"),
+  )
+  const suppliedName = decodeParameter(query?.sh_module_name ?? query?.module_name ?? query?.name)
+  const derivedName = deriveModuleNameFromURL(url)
   return {
-    url: normalizeModuleUrl(query?.sh_module_url ?? query?.module_url ?? query?.url),
-    name: sanitizeModuleName(query?.sh_module_name ?? query?.module_name ?? query?.name),
-    category: cleanOneLine(query?.sh_module_category ?? query?.module_category ?? query?.category, 64) || undefined,
+    url,
+    // Scriptable derives the file name from the URL when `name` is omitted.
+    // Keep that behavior for old Scripting links and share-sheet bridges.
+    name: sanitizeModuleName(suppliedName || derivedName || `untitled-${Date.now()}`),
+    category:
+      cleanOneLine(
+        decodeParameter(query?.sh_module_category ?? query?.module_category ?? query?.category),
+        64,
+      ) || undefined,
   }
 }
 

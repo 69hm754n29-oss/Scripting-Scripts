@@ -2,6 +2,7 @@ import { Intent, Script } from "scripting"
 
 import { runShortcutUpdate } from "./utils/shortcut_update"
 import { resolveScriptHubQueryParameters } from "./utils/deep_link_import"
+import { getIntentFileURLs } from "./utils/intent_input"
 
 ;(async () => {
   try {
@@ -10,9 +11,11 @@ import { resolveScriptHubQueryParameters } from "./utils/deep_link_import"
       ...(Intent.textsParameter ?? []),
       Intent.shortcutParameter,
     ])
+    const fileURLs = getIntentFileURLs(Intent as any)
     const result = await runShortcutUpdate({
       shortcutParameter: Intent.shortcutParameter,
       textsParameter: Intent.textsParameter,
+      fileURLsParameter: fileURLs,
       queryParameters,
     })
     Script.exit(Intent.text(result.text))

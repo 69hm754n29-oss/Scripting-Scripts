@@ -18,6 +18,16 @@ export type DownloadModuleOptions = {
 const FETCH_TIMEOUT_MS = 30 * 1000
 const FILE_OPERATION_TIMEOUT_MS = 15 * 1000
 
+async function writeString(fm: any, path: string, content: string): Promise<void> {
+  const writer = typeof fm?.writeAsString === "function"
+    ? fm.writeAsString
+    : fm?.writeAsStringSync
+  if (typeof writer !== "function") throw new Error("FileManager.writeAsString 不可用")
+  const result = writer.call(fm, path, content)
+  if (result && typeof result.then === "function") await result
+  if (result === false) throw new Error(`FileManager 拒绝写入：${path}`)
+}
+
 function fetchTimeoutMessage(url: string): string {
   if (/^https?:\/\/script\.hub(?:\/|$)/i.test(url)) {
     return `Script-Hub 转换结果请求超时（${FETCH_TIMEOUT_MS / 1000}s）。script.hub/file 不是普通公网下载地址，必须确认当前 Scripting 流量经过 Surge，且 Script Hub 模块和脚本均已启用`
@@ -58,18 +68,36 @@ async function fetchModuleText(url: string): Promise<string> {
   if (typeof fetchFn !== "function") throw new Error("fetch 不可用")
 
   const controller = typeof AbortController === "function" ? new AbortController() : undefined
+  const isScriptHubHttp = /^http:\/\/script\.hub(?:\/|$)/i.test(url)
   try {
     return await withTimeout(
       async () => {
-        const res = await fetchFn(url, {
+        const requestInit: any = {
           headers: {
-            "User-Agent":
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            Accept: "text/plain,text/*,*/*",
+            // Match Scriptable's SurgeModuleTool request.  The Script-Hub
+            // converter is exposed through Surge's local `script.hub` route;
+            // keeping its expected UA avoids a host-specific rewrite branch.
+            "User-Agent": "script-hub/1.0.0",
+            Accept: "*/*",
           },
+          // Script-Hub's iOS-facing endpoint is intentionally HTTP and is
+          // resolved by the iOS Surge module. Scripting otherwise rejects an
+          // insecure request before it can reach that local route.
+          ...(isScriptHubHttp ? { allowInsecureRequest: true } : {}),
+          timeout: FETCH_TIMEOUT_MS / 1000,
+          debugLabel: isScriptHubHttp ? "Script-Hub 转换模块" : "Surge 模块更新",
           ...(controller ? { signal: controller.signal } : {}),
-        })
-        if (!res?.ok) {
+        }
+        // Scriptable uses `new Request(url)` followed by `loadString()`. Use
+        // Scripting's Request object when available as the closest equivalent;
+        // retain the plain-fetch fallback for older Scripting runtimes.
+        const RequestCtor: any = (globalThis as any).Request
+        const request = typeof RequestCtor === "function"
+          ? new RequestCtor(url, requestInit)
+          : null
+        const res = request ? await fetchFn(request) : await fetchFn(url, requestInit)
+        const status = Number(res?.status ?? 0)
+        if (status < 200 || status >= 400) {
           throw new Error(`HTTP ${res?.status ?? "unknown"} ${res?.statusText ?? ""}`.trim())
         }
         if (typeof res.text !== "function") throw new Error("Response.text 不可用")
@@ -98,7 +126,7 @@ async function writeFinalModule(
 
   const path = moduleFilePath(info.name, targetDir)
   await withTimeout(
-    () => fm.writeAsString(path, content),
+    () => writeString(fm, path, content),
     FILE_OPERATION_TIMEOUT_MS,
     `写入模块超时（${FILE_OPERATION_TIMEOUT_MS / 1000}s）：${path}`,
   )
@@ -116,6 +144,45 @@ async function writeFinalModule(
     if (saved !== content) throw new Error(`写入后校验失败：${path}`)
   }
   return path
+}
+
+/**
+ * Write already available module text into the selected Surge bookmark.
+ * This is intentionally separate from downloadModule so a local .sgmodule
+ * shared from Files can bypass the network and script.hub entirely.
+ */
+export async function writeModuleText(
+  info: ModuleInfo & { linkPrefix?: string },
+  targetDir: string,
+  rawText: string,
+): Promise<{ ok: boolean; message?: string; path?: string }> {
+  const fm: any = (globalThis as any).FileManager
+  if (!fm?.writeAsString) return { ok: false, message: "FileManager.writeAsString 不可用" }
+  try {
+    // A file shared from Files is already the converted module. Keep it
+    // byte-for-byte as text: do not inject a remote URL/name marker that
+    // belongs to the URL-download path.
+    const content = validateSurgeModuleText(rawText)
+    const path = moduleFilePath(info.name, targetDir)
+    await withTimeout(
+      () => writeString(fm, path, content),
+      FILE_OPERATION_TIMEOUT_MS,
+      `写入本地模块超时（${FILE_OPERATION_TIMEOUT_MS / 1000}s）：${path}`,
+    )
+    if (typeof fm.readAsString === "function") {
+      const saved = String(
+        await withTimeout(
+          () => fm.readAsString(path),
+          FILE_OPERATION_TIMEOUT_MS,
+          `本地模块校验超时（${FILE_OPERATION_TIMEOUT_MS / 1000}s）：${path}`,
+        ),
+      )
+      if (saved !== content) throw new Error(`写入后校验失败：${path}`)
+    }
+    return { ok: true, path }
+  } catch (e: any) {
+    return { ok: false, message: String(e?.message ?? e) }
+  }
 }
 
 async function downloadModuleDirect(

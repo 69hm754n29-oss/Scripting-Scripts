@@ -148,7 +148,12 @@ export async function ensureStorage(): Promise<void> {
     if (!resolved) {
       throw new Error("书签路径不可用，请在设置页重新选择书签文件夹")
     }
-    await ensureDir(resolved)
+    // A directory returned by bookmarkedPath() is an already selected
+    // security-scoped external folder. Do not run exists/createDirectory on
+    // it before an import: File Provider/iCloud may report a transient false
+    // or keep that metadata call pending even though a direct file write is
+    // valid. Scriptable's URL import likewise writes into the selected iCloud
+    // destination without trying to create the destination folder first.
     return
   }
   await ensureDir(getBaseDir())

@@ -1,3 +1,34 @@
+## 维护记录（2026-10-26）
+- 已在 iOS Scripting 实机验证：Script-Hub 导入和 Files 分享导入均能写入 Surge 书签目录。
+- 补充运行依赖、Intent 配置、深链格式、导入边界和故障排查说明。
+
+## v3.0.18
+- 严格按 Scripting 书签语义写入：已解析的 Surge 外部目录不再先执行 `exists/createDirectory`，避免 iCloud/File Provider 的元数据调用阻塞导入。
+- 写入同时兼容 `writeAsString` 与 `writeAsStringSync`，并检查文件提供器返回的失败值。
+
+## v3.0.17
+- 严格对齐 Scriptable 的 URL 导入判定：收到 `url` 即可进入模块导入，不再强制依赖 `action`；缺少名称时按结果 URL 的文件名推导。
+- 兼容 Scripting 分享扩展在不同版本使用的 `Intent.fileURLsParameter`、`Intent.filesParameter` 和文件包装对象，避免只拉起 App 但没有进入导入。
+- 网络请求改用 Scriptable `SurgeModuleTool` 使用的 `User-Agent: script-hub/1.0.0`。
+
+## v3.0.16
+- 新增本地 `.sgmodule` 文件导入：通过 iOS 分享到 Scripting 后，直接写入已授权的 Surge iCloud 书签目录，不再请求 `script.hub`；适合已经保存到“文件”的转换结果。
+- 对齐 Scriptable 导入链路：允许 iOS Surge 的 `http://script.hub` 本地转换入口，避免 Scripting 在发出请求前拦截不安全 HTTP；本地文件写入保留转换结果原文。
+
+## v3.0.15
+- 修复 Script-Hub 深链中 `Script%20Hub` 等普通文本参数未解码的问题；模块 URL 仍只对整体百分号编码进行解码，避免破坏 URL 内部的 `%20` 等路径编码。
+
+## v3.0.14
+- 按 Scripting Storage 官方行为兼容字符串和 JSON 对象两种配置存储格式，避免旧配置被 `JSON.parse` 误判后静默回退到 Scripting 默认 iCloud 目录。
+- 兼容部分 URL Scheme 桥接器保留的整体百分号编码参数，同时避免二次解码正常模块链接内部的编码路径。
+- 深链日志增加转换地址类型和冷启动参数键，便于区分参数未到达、书签目录解析失败和 `script.hub` 网络请求失败。
+
+## v3.0.13
+- 按 Scripting 官方生命周期拆分后台深链和首页：`run_single` 导入先走无界面的 headless 路径，只有普通启动才动态加载首页组件。
+- `index.tsx` 通过 URL Scheme 返回普通字符串并明确调用 `Script.exit`，避免把 Intent 专用值带入主应用入口造成实例驻留。
+- URL/文件分享输入未识别为 Script-Hub 导入时不再误触发“更新全部模块”，并增加脚本名诊断日志。
+- 在清单中明确入口为 `index.tsx`。
+
 ## v3.0.12
 - 修复超时保护启动顺序：iCloud/FileManager、网络和写入操作改为在计时器建立后才启动，避免已创建的 Promise 先进入卡住状态。
 - Script-Hub 导入优先于批量更新配置读取，避免无关的旧配置/Storage 访问阻塞深链导入。
