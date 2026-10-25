@@ -1,4 +1,5 @@
 ## 维护记录（2026-10-26）
+- 调整仓库结构：将唯一 Scripting 项目提升到仓库根目录，根仓库地址现在可直接用于 Scripting 远程导入。
 - 已在 iOS Scripting 实机验证：Script-Hub 导入和 Files 分享导入均能写入 Surge 书签目录。
 - 补充运行依赖、Intent 配置、深链格式、导入边界和故障排查说明。
 

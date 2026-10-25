@@ -17,7 +17,7 @@
 
 必须具备：
 
-1. iOS/iPadOS 上安装支持 Intent 的 Scripting，并将 `Surge-Module-Manager` 项目导入 Scripting。
+1. iOS/iPadOS 上安装支持 Intent 的 Scripting，并从本仓库根地址导入项目：`https://github.com/ranzhigg/Scripting-Scripts`。
 2. 项目目录包含 `index.tsx` 和 `intent.tsx`，`script.json` 的 `intentInputTypes` 至少包含 `File URLs`；从 Script-Hub 深链调用时还需要 `URLs`。
 3. 在 Scripting 项目设置中选择 Surge 的本地模块书签目录，并保持该目录授权有效。目录通常位于 Surge 的 iCloud 文件提供器中。
 4. 使用 Script-Hub 导入链接时，Surge 的 Script-Hub 模块和相关重写脚本必须启用，使 `http://script.hub` 本地转换地址可由 Scripting 访问。
@@ -61,7 +61,9 @@ Files 分享入口依赖 Scripting 的 Intent 注册。若分享后显示“没�
 
 ## 安装
 
-在 Scripting 中导入 `Surge-Module-Manager` 脚本目录，首次运行后在设置页选择 Surge 的本地模块目录。
+在 Scripting 中直接导入本仓库根地址 `https://github.com/ranzhigg/Scripting-Scripts`。脚本清单 `script.json` 位于仓库根目录，首次运行后在设置页选择 Surge 的本地模块目录。
+
+不要再使用旧的 `.../tree/main/Surge-Module-Manager` 子目录地址；当前仓库只有一个脚本，已调整为根目录可直接远程导入。
 
 导入后建议立即检查：项目标题 → Intent 设置 → `File URLs`、`URLs`、`Text`；然后用一个小型 `.sgmodule` 做一次 Files 分享冒烟。远程更新仓库文件不会替代手机端的 Intent 设置检查。
 
