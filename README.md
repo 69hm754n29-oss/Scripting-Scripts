@@ -26,6 +26,7 @@
 - Surge 已开启 iCloud，并能看到本地模块书签目录
 - 首次运行时在脚本设置中选择 Surge 的模块目录
 - 在线转换导入需要搭配 **Script-Hub 测试版**，并启用对应模块和重写
+- Script-Hub 中填写的 Scripting 脚本名必须与 Scripting 里显示的名称完全一致，默认是 `Surge模块管理`
 
 脚本本身不需要 Scripting Pro API，也不需要 Mac Surge、Node.js 或 Scriptable。普通版 Scripting 即可运行；Scriptable 仅作为另一种可选导入方式。
 
@@ -43,8 +44,11 @@
 
 1. 安装并启用 Script-Hub 测试版。
 2. 在 Surge 中启用 Script-Hub 模块及相关重写。
-3. 在 Script-Hub 中完成转换后，点击“导入 Surge（本地模块，需配合 Scripting）”。
-4. Scripting 会启动本脚本，将转换结果写入已选择的 Surge 模块目录。
+3. 在 Script-Hub 的导入设置中填写 Scripting 里实际显示的脚本名，默认填写 `Surge模块管理`。
+4. 在 Script-Hub 中完成转换后，点击“导入 Surge（本地模块，需配合 Scripting）”。
+5. Scripting 会通过脚本名启动本脚本，将转换结果写入已选择的 Surge 模块目录。
+
+脚本名是深链路由的一部分。若你在 Scripting 中重命名了脚本，也必须同步修改 Script-Hub 中的脚本名；名称多一个空格、少一个字或使用旧名称，都可能只打开 Scripting 而没有执行导入。
 
 请直接点击 Script-Hub 页面中的导入按钮，不要打开链接后复制浏览器地址栏内容。地址栏中的 URL 可能没有正确编码，复制后会导致导入参数异常。
 
@@ -82,10 +86,13 @@
 
 检查以下项目：
 
-1. 是否已经在脚本设置中选择 Surge 的 iCloud 模块目录。
-2. 该目录是否仍然有访问权限。
-3. Script-Hub 模块和重写是否已启用。
-4. 是否直接点击了导入按钮，而不是复制未编码的浏览器地址。
+1. Script-Hub 中的 Scripting 脚本名是否与 Scripting 里显示的名称完全一致。
+2. 是否已经在脚本设置中选择 Surge 的 iCloud 模块目录。
+3. 该目录是否仍然有访问权限。
+4. Script-Hub 模块和重写是否已启用。
+5. 是否直接点击了导入按钮，而不是复制未编码的浏览器地址。
+
+脚本名只影响 Script-Hub 的 `scripting://run_single/...` 深链导入；从“文件”分享 `.sgmodule` 时，Scripting 通过 Intent 直接调用脚本，不依赖这个名称设置。
 
 ### 只想导入本地文件
 
