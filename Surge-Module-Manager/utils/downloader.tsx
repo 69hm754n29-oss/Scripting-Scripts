@@ -58,24 +58,26 @@ async function fetchModuleText(url: string): Promise<string> {
   if (typeof fetchFn !== "function") throw new Error("fetch 不可用")
 
   const controller = typeof AbortController === "function" ? new AbortController() : undefined
-  const request = (async () => {
-    const res = await fetchFn(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        Accept: "text/plain,text/*,*/*",
-      },
-      ...(controller ? { signal: controller.signal } : {}),
-    })
-    if (!res?.ok) {
-      throw new Error(`HTTP ${res?.status ?? "unknown"} ${res?.statusText ?? ""}`.trim())
-    }
-    if (typeof res.text !== "function") throw new Error("Response.text 不可用")
-    return String(await res.text())
-  })()
-
   try {
-    return await withTimeout(request, FETCH_TIMEOUT_MS, fetchTimeoutMessage(url))
+    return await withTimeout(
+      async () => {
+        const res = await fetchFn(url, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            Accept: "text/plain,text/*,*/*",
+          },
+          ...(controller ? { signal: controller.signal } : {}),
+        })
+        if (!res?.ok) {
+          throw new Error(`HTTP ${res?.status ?? "unknown"} ${res?.statusText ?? ""}`.trim())
+        }
+        if (typeof res.text !== "function") throw new Error("Response.text 不可用")
+        return String(await res.text())
+      },
+      FETCH_TIMEOUT_MS,
+      fetchTimeoutMessage(url),
+    )
   } catch (e: any) {
     try { controller?.abort() } catch {}
     throw e
@@ -96,7 +98,7 @@ async function writeFinalModule(
 
   const path = moduleFilePath(info.name, targetDir)
   await withTimeout(
-    (async () => fm.writeAsString(path, content))(),
+    () => fm.writeAsString(path, content),
     FILE_OPERATION_TIMEOUT_MS,
     `写入模块超时（${FILE_OPERATION_TIMEOUT_MS / 1000}s）：${path}`,
   )
@@ -106,7 +108,7 @@ async function writeFinalModule(
   if (typeof fm.readAsString === "function") {
     const saved = String(
       await withTimeout(
-        (async () => fm.readAsString(path))(),
+        () => fm.readAsString(path),
         FILE_OPERATION_TIMEOUT_MS,
         `写入校验超时（${FILE_OPERATION_TIMEOUT_MS / 1000}s）：${path}`,
       ),
