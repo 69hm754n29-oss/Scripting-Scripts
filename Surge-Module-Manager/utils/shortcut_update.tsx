@@ -132,12 +132,12 @@ async function runScriptHubImport(
   log(`Script-Hub import requested: name=${request.name}`)
   log("import stage: resolving bookmarked folder")
   await withTimeout(
-    ensureStorage(),
+    () => ensureStorage(),
     IMPORT_STAGE_TIMEOUT_MS,
     `访问书签目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s），请确认 Surge iCloud 目录已授权并可用`,
   )
   const baseDir = await withTimeout(
-    getModulesDirResolved(),
+    () => getModulesDirResolved(),
     IMPORT_STAGE_TIMEOUT_MS,
     `解析书签目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s），请重新选择 Surge 目录`,
   )
@@ -149,7 +149,7 @@ async function runScriptHubImport(
   // unnecessary and a common source of a background Intent appearing stuck.
   const existingPath = moduleFilePath(request.name, baseDir)
   const sameName = await withTimeout(
-    loadModuleAtPath(existingPath),
+    () => loadModuleAtPath(existingPath),
     IMPORT_STAGE_TIMEOUT_MS,
     `读取目标模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${existingPath}`,
   )
@@ -159,16 +159,17 @@ async function runScriptHubImport(
 
   log(`import stage: downloading ${request.url}`)
   const result = await withTimeout(
-    downloadModule(
-      {
-        name: sameName?.name ?? request.name,
-        link: request.url,
-        category: request.category ?? sameName?.category,
-        saveDir: baseDir,
-        linkPrefix: sameName ? await detectLinkPrefix(sameName) : undefined,
-      },
-      { mode: "direct" },
-    ),
+    async () =>
+      downloadModule(
+        {
+          name: sameName?.name ?? request.name,
+          link: request.url,
+          category: request.category ?? sameName?.category,
+          saveDir: baseDir,
+          linkPrefix: sameName ? await detectLinkPrefix(sameName) : undefined,
+        },
+        { mode: "direct" },
+      ),
     IMPORT_TOTAL_TIMEOUT_MS,
     `Script-Hub 导入超时（${IMPORT_TOTAL_TIMEOUT_MS / 1000}s）。可能是 script.hub 未通过 Surge 解析，或 iCloud 目录暂不可写`,
   )
@@ -194,11 +195,15 @@ export async function runShortcutUpdate(input: ShortcutUpdateInput = {}): Promis
   try {
     log("start")
     log(`query parameters: ${Object.keys(input.queryParameters ?? {}).join(", ") || "none"}`)
-    const cfg = loadConfig()
-    log(`config loaded: concurrency=${cfg.downloadConcurrency}, bookmark=${cfg.baseBookmarkName || "none"}`)
 
+    // Script-Hub imports do not need the batch-update configuration. Resolve
+    // this path first so a stale config/Storage read cannot block a deep-link
+    // import before its stage timeouts are installed.
     const importResult = await runScriptHubImport(input.queryParameters, log)
     if (importResult) return importResult
+
+    const cfg = loadConfig()
+    log(`config loaded: concurrency=${cfg.downloadConcurrency}, bookmark=${cfg.baseBookmarkName || "none"}`)
 
     const options = parseShortcutOptions(input, log)
     log(`filters: ${formatOptions(options)}`)
