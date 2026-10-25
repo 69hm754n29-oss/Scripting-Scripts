@@ -35,12 +35,11 @@
     "it": "",
     "es": ""
   },
-  "iconImage": "https://raw.githubusercontent.com/BlackCCCat/Scripting-Scripts/refs/heads/main/src/Surge-Module-Manager.PNG",
   "runInApp": false,
   "author": {
     "email": null,
-    "name": "BlackCCCat",
-    "homepage": "https://github.com/BlackCCCat"
+    "name": "ranzhigg",
+    "homepage": "https://github.com/ranzhigg"
   },
   "version": "3.0.10"
 }
