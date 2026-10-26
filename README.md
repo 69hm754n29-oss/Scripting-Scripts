@@ -37,6 +37,7 @@ https://github.com/ranzhigg/Scripting-Scripts
 - 支持预览、复制转换链接，以及 Surge、Egern、Scriptable、Scripting 等导入入口
 - 把 Surge 模块目标直接写入已授权的 Surge 目录
 - 写入成功后自动刷新 Scripting版模块列表
+- 从快捷指令或系统分享进入时，会直接打开 Script-Hub 页面并自动填入、识别来源；页面首次打开也会识别剪贴板中的链接或模块文本
 
 应用不内置在线模块市场、不维护第三方站点列表，也不会自动扫描或分发第三方内容。单个插件或模块使用 HTTPS 直链即可。
 
@@ -91,7 +92,7 @@ https://github.com/ranzhigg/Scripting-Scripts
 - 传入 JSON：`{"category":"广告拦截","name":"模块名称"}`
 - 传入多个模块名：`{"names":["模块1","模块2"]}`
 
-分享链接转换需要在项目标题 → Intent 设置中启用 `URLs`；如果通过文本分享链接，也请启用 `Text`。转换后的默认目标是 Surge / Egern 模块，写入前仍需先在脚本设置中授权 Surge 模块目录。
+分享链接转换需要在项目标题 → Intent 设置中启用 `URLs`；如果通过文本分享链接，也请启用 `Text`。进入页面后会自动填入来源并收起键盘，转换后的默认目标是 Surge / Egern 模块，写入前仍需先在脚本设置中授权 Surge 模块目录。
 
 ## 常见问题
 

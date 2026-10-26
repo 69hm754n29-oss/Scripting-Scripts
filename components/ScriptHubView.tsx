@@ -47,6 +47,18 @@ import { recordRecentImport } from "../utils/recent_imports"
 
 type InputMode = "remote-url" | "local-text"
 
+export type ScriptHubInitialInput = {
+  sourceURL?: string
+  localText?: string
+  name?: string
+  category?: string
+  sourceFormat?: ScriptHubSourceFormat
+  targetFormat?: ScriptHubTargetFormat
+  sourceUserAgent?: string
+  removeSourceMetadata?: boolean
+  enableJQ?: boolean
+}
+
 type ScriptHubAdvancedValues = {
   description: string
   filename: string
@@ -175,6 +187,36 @@ function hideKeyboard(): void {
   } catch {}
 }
 
+async function readClipboardText(): Promise<string> {
+  const pasteboard: any = (globalThis as any).Pasteboard
+  if (typeof pasteboard?.getString === "function") return String(await pasteboard.getString() ?? "")
+  if (typeof pasteboard?.string === "function") return String(await pasteboard.string() ?? "")
+  if (typeof pasteboard?.string === "string") return pasteboard.string
+  return ""
+}
+
+function clipboardURL(value: string): string {
+  const match = String(value ?? "").trim().match(/https?:\/\/[^\s<>"']+/i)
+  if (!match) return ""
+  const candidate = match[0].replace(/[),.;!?，。；！？]+$/g, "")
+  try {
+    const parsed = new URL(candidate)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return ""
+    return parsed.toString()
+  } catch {
+    return ""
+  }
+}
+
+function looksLikeConvertibleText(value: string): boolean {
+  const text = String(value ?? "").trim()
+  if (!text || text.length < 8) return false
+  return /(?:^|\n)\s*\[(?:general|rewrite_local|rewrite_remote|filter_remote|script|rewrite|rule|url rewrite|header rewrite|body rewrite|map local)\]\s*$/im.test(text)
+    || /^\s*#!(?:name|desc|category|icon|author)\s*=/im.test(text)
+    || /(?:^|\n)\s*(?:DOMAIN(?:-SUFFIX|-KEYWORD)?|IP-CIDR6?|GEOIP|URL-REGEX|HOST(?:-SUFFIX|-KEYWORD)?),/im.test(text)
+    || /\b(?:const|let|var|function|class|import|export|module\.exports|\$request|\$response|\$done|\$task)\b/.test(text)
+}
+
 function sourceNameFromText(value: string): string {
   const metadata = value.match(/^\s*#!(?:name|title)\s*=\s*(.+)$/im)?.[1]
   const firstUsefulLine = value
@@ -276,7 +318,7 @@ function compatibleTargets(sourceFormat: ScriptHubSourceFormat): typeof SCRIPT_H
   ))
 }
 
-export function ScriptHubView(props: { onImported?: () => void; tag?: number; tabItem?: any }) {
+export function ScriptHubView(props: { onImported?: () => void; tag?: number; tabItem?: any; initialInput?: ScriptHubInitialInput }) {
   const [cfg, setCfg] = useState<AppConfig>(() => loadConfig())
   const [inputMode, setInputMode] = useState<InputMode>("remote-url")
   const [sourceURL, setSourceURL] = useState("")
@@ -495,6 +537,122 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       setBusy(false)
     }
   }
+
+  async function detectInitialInput(
+    mode: InputMode,
+    value: string,
+    userAgent: string,
+    isActive: () => boolean = () => true,
+  ): Promise<void> {
+    const text = String(value ?? "").trim()
+    if (!text || !isActive()) return
+    if (mode === "local-text") {
+      const detection = detectScriptHubSourceFormat("clipboard.txt", text)
+      if (!isActive()) return
+      setDetectedFormat(detection.sourceFormat, detection.reason, detection.suggestedTargetFormat)
+      setStatus("已读取内容并识别：" + scriptHubSourceFormatLabel(detection.sourceFormat))
+      return
+    }
+
+    setBusy(true)
+    setStatus("已读取来源，正在识别格式…")
+    try {
+      const response = await fetchSourceText(text, {
+        userAgent,
+        maxChars: 512 * 1024,
+        debugLabel: "Script-Hub 分享链接识别",
+      })
+      if (!isActive()) return
+      const detection = detectScriptHubSourceFormat(text, response.text)
+      setDetectedFormat(detection.sourceFormat, detection.reason, detection.suggestedTargetFormat)
+      setStatus("已识别：" + scriptHubSourceFormatLabel(detection.sourceFormat))
+    } catch (e: any) {
+      if (!isActive()) return
+      const fallback = detectScriptHubSourceFormat(text)
+      setDetectedFormat(fallback.sourceFormat, fallback.reason + "（未读取内容）", fallback.suggestedTargetFormat)
+      setStatus("在线读取失败，已按链接后缀兜底：" + scriptHubSourceFormatLabel(fallback.sourceFormat))
+      console.log("[Surge模块管理][Script-Hub] initial source detection fallback: " + String(e?.message ?? e))
+    } finally {
+      if (isActive()) setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      const provided = props.initialInput
+      let mode: InputMode | null = null
+      let value = ""
+      if (provided?.sourceURL?.trim()) {
+        mode = "remote-url"
+        value = provided.sourceURL.trim()
+      } else if (provided?.localText?.trim()) {
+        mode = "local-text"
+        value = provided.localText.trim()
+      } else {
+        try {
+          const clipboard = (await readClipboardText()).trim()
+          if (!active) return
+          const url = clipboardURL(clipboard)
+          if (url) {
+            mode = "remote-url"
+            value = url
+            setStatus("已从剪贴板读取链接，正在识别格式…")
+          } else if (looksLikeConvertibleText(clipboard)) {
+            mode = "local-text"
+            value = clipboard
+            setStatus("已从剪贴板读取文本，正在识别格式…")
+          }
+        } catch (e: any) {
+          console.log("[Surge模块管理][Script-Hub] clipboard read skipped: " + String(e?.message ?? e))
+        }
+      }
+      if (!active || !mode || !value) return
+
+      setInputMode(mode)
+      setSourceFormatAuto(!provided?.sourceFormat)
+      setDetectedReason("")
+      setSourceSettingsExpanded(true)
+      setFormatExpanded(true)
+      hideKeyboard()
+      if (mode === "remote-url") {
+        setSourceURL(value)
+        setLocalText("")
+        if (!provided?.name && !moduleName.trim()) setModuleName(deriveModuleNameFromSource(value))
+      } else {
+        setLocalText(value)
+        setSourceURL("")
+        if (!provided?.name && !moduleName.trim()) setModuleName(sourceNameFromText(value))
+      }
+      if (provided?.name?.trim()) setModuleName(provided.name.trim())
+      if (provided?.category?.trim()) setCustomCategory(provided.category.trim())
+      if (provided?.sourceUserAgent !== undefined) setSourceUserAgent(provided.sourceUserAgent)
+      if (provided?.removeSourceMetadata !== undefined) setRemoveSourceMetadata(provided.removeSourceMetadata)
+      if (provided?.enableJQ !== undefined) setEnableJQ(provided.enableJQ)
+      if (provided?.sourceFormat) setSourceFormat(provided.sourceFormat)
+      if (provided?.targetFormat) setTargetFormat(provided.targetFormat)
+      hideKeyboard()
+      if (provided?.sourceFormat) {
+        setDetectedReason("已使用分享参数指定来源格式")
+        setStatus("已填入来源，格式由分享参数指定")
+      } else {
+        await detectInitialInput(mode, value, provided?.sourceUserAgent ?? sourceUserAgent, () => active)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [
+    props.initialInput?.sourceURL,
+    props.initialInput?.localText,
+    props.initialInput?.name,
+    props.initialInput?.category,
+    props.initialInput?.sourceFormat,
+    props.initialInput?.targetFormat,
+    props.initialInput?.sourceUserAgent,
+    props.initialInput?.removeSourceMetadata,
+    props.initialInput?.enableJQ,
+  ])
 
   async function copyConversionURL() {
     if (!conversionResult.url) {
