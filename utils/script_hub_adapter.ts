@@ -30,6 +30,13 @@ export type ScriptHubTargetFormat =
   | "surge-script"
   | "plain-text"
 
+export type ScriptHubFormatDetection = {
+  sourceFormat: ScriptHubSourceFormat
+  suggestedTargetFormat?: ScriptHubTargetFormat
+  confidence: "high" | "medium" | "low"
+  reason: string
+}
+
 export type ScriptHubFormatOption<T extends string> = {
   value: T
   label: string
@@ -78,10 +85,7 @@ export function scriptHubTargetPath(value: ScriptHubTargetFormat): "file" | "con
   return value === "plain-text" || value.endsWith("-script") ? "convert" : "file"
 }
 
-/** Pick a sensible source type for a marketplace file without locking the
- * marketplace to one provider or one filename. The user can still override it
- * in the source settings UI. */
-export function inferScriptHubSourceFormat(value: unknown): ScriptHubSourceFormat {
+function sourceFormatFromPath(value: unknown): ScriptHubSourceFormat {
   const raw = String(value ?? "").split(/[?#]/, 1)[0].toLowerCase()
   if (/\.(?:plugin|lpx)$/.test(raw)) return "loon-plugin"
   if (/\.(?:list|rules?)$/.test(raw)) return "rule-set"
@@ -90,6 +94,130 @@ export function inferScriptHubSourceFormat(value: unknown): ScriptHubSourceForma
   if (/\.conf$/.test(raw)) return "qx-rewrite"
   if (/\.snippet$/.test(raw)) return "plain-text"
   return "loon-plugin"
+}
+
+function normalizedSourceContent(value: unknown): string {
+  return String(value ?? "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .slice(0, 512 * 1024)
+}
+
+function hasSection(content: string, names: string): boolean {
+  return new RegExp(`^\\s*\\[(?:${names})\\]\\s*$`, "im").test(content)
+}
+
+function looksLikeRuleSet(content: string): boolean {
+  return content.split("\n").some((line) => {
+    const value = line.trim()
+    if (!value || value.startsWith("#") || value.startsWith("//")) return false
+    return /^(?:DOMAIN(?:-SUFFIX|-KEYWORD)?|IP-CIDR6?|GEOIP|USER-AGENT|URL-REGEX|HOST(?:-SUFFIX|-KEYWORD)?|PROCESS-NAME|FINAL|MATCH|AND|OR|NOT),/i.test(value)
+  })
+}
+
+function looksLikeSurgeModule(content: string): boolean {
+  const hasSurgeSection = hasSection(
+    content,
+    "General|Rule|Rule Set|URL Rewrite|Header Rewrite|Body Rewrite|Map Local",
+  )
+  const hasSurgeScriptEntry = /\btype\s*=\s*(?:http-request|http-response|cron|event|generic|request|response|websocket|dns)\b/i.test(content)
+  const hasSurgeMetadata = /^\s*#!(?:name|desc|category|icon|author|arguments)\s*=/im.test(content)
+  return hasSurgeSection || (hasSurgeMetadata && hasSurgeScriptEntry)
+}
+
+function looksLikeLoonPlugin(content: string): boolean {
+  const hasLoonScriptEntry = /^\s*(?:http-request|http-response|cron|event|dns|websocket)\b[^\n]*\bscript-path\s*=/im.test(content)
+  const hasLoonRewriteEntry = /^\s*(?:http-request|http-response|http-data|request-header|response-header)\b/im.test(content)
+  const hasLoonSection = hasSection(content, "Script|Rewrite|MITM|Host|Remote Filter")
+  const hasSurgeType = /\btype\s*=\s*(?:http-request|http-response|cron|event|generic|request|response|websocket|dns)\b/i.test(content)
+  return !hasSurgeType && (hasLoonScriptEntry || hasLoonRewriteEntry || hasLoonSection && /\bscript-path\s*=/i.test(content))
+}
+
+function looksLikeQXRewrite(content: string): boolean {
+  const hasQXSection = hasSection(content, "rewrite_local|rewrite_remote|filter_remote")
+  const hasSurgeSection = hasSection(content, "General|Rule|Rule Set|URL Rewrite|Header Rewrite|Body Rewrite|Map Local")
+  return hasQXSection || (!hasSurgeSection && (
+    /\burl\s+(?:reject|reject-200|script-(?:request|response)-(?:body|header)|request-header|response-header|echo|rewrite|307|302)\b/i.test(content)
+      || /\b(?:script-(?:request|response)-(?:body|header)|request-header|response-header)\s+/i.test(content)
+  ))
+}
+
+function looksLikeJavaScript(content: string): boolean {
+  return /(?:^|\n)\s*(?:const|let|var|function|class|import|export)\s+[$A-Z_a-z]/m.test(content)
+    || /\b(?:module\.exports|require\s*\(|\$request|\$response|\$done|\$task|\$notify)\b/.test(content)
+}
+
+/**
+ * Detect the actual Script-Hub input type. Filename-only detection is not
+ * enough for community repositories: many of them publish module text with a
+ * `.js` suffix, while others publish executable QX scripts. Content signals
+ * win over the suffix, and a QX script gets the only compatible target.
+ */
+export function detectScriptHubSourceFormat(
+  value: unknown,
+  content?: unknown,
+): ScriptHubFormatDetection {
+  const fallback = sourceFormatFromPath(value)
+  const text = normalizedSourceContent(content)
+
+  if (text) {
+    if (looksLikeRuleSet(text)) {
+      return { sourceFormat: "rule-set", confidence: "high", reason: "检测到规则集条目" }
+    }
+    if (looksLikeSurgeModule(text)) {
+      return { sourceFormat: "surge-module", confidence: "high", reason: "检测到 Surge 模块段落或脚本参数" }
+    }
+    if (looksLikeLoonPlugin(text)) {
+      return { sourceFormat: "loon-plugin", confidence: "high", reason: "检测到 Loon 插件脚本语法" }
+    }
+    if (looksLikeQXRewrite(text)) {
+      return { sourceFormat: "qx-rewrite", confidence: "high", reason: "检测到 Quantumult X 重写语法" }
+    }
+    if (looksLikeJavaScript(text)) {
+      return {
+        sourceFormat: "qx-script",
+        suggestedTargetFormat: "surge-script",
+        confidence: "medium",
+        reason: "检测到 JavaScript 脚本内容；目标应使用 Surge 脚本（兼容）",
+      }
+    }
+    if (/^\s*#!(?:name|desc|category|icon|author)\s*=/im.test(text)) {
+      return { sourceFormat: "surge-module", confidence: "medium", reason: "检测到模块元数据" }
+    }
+  }
+
+  if (fallback === "qx-script") {
+    return {
+      sourceFormat: fallback,
+      suggestedTargetFormat: "surge-script",
+      confidence: "low",
+      reason: "按 .js/.script 后缀判断；未能读取内容确认格式",
+    }
+  }
+  return {
+    sourceFormat: fallback,
+    confidence: text ? "low" : "medium",
+    reason: text ? "未检测到明确格式，按文件后缀兜底" : "未读取来源内容，按文件后缀判断",
+  }
+}
+
+/** Pick a sensible source type for a marketplace file. */
+export function inferScriptHubSourceFormat(value: unknown, content?: unknown): ScriptHubSourceFormat {
+  return detectScriptHubSourceFormat(value, content).sourceFormat
+}
+
+export function isScriptHubSourceTargetCompatible(
+  sourceFormat: ScriptHubSourceFormat,
+  targetFormat: ScriptHubTargetFormat,
+): boolean {
+  return sourceFormat !== "qx-script" || targetFormat === "surge-script"
+}
+
+export function suggestedScriptHubTargetFormat(
+  sourceFormat: ScriptHubSourceFormat,
+  currentTarget: ScriptHubTargetFormat,
+): ScriptHubTargetFormat {
+  return sourceFormat === "qx-script" ? "surge-script" : currentTarget
 }
 
 export type ScriptHubConversionOptions = {

@@ -19,17 +19,20 @@ import {
 
 import {
   buildScriptHubConversionURL,
+  detectScriptHubSourceFormat,
   deriveModuleNameFromSource,
-  inferScriptHubSourceFormat,
+  isScriptHubSourceTargetCompatible,
   normalizeModuleName,
   normalizeSourceURL,
   SCRIPT_HUB_SOURCE_FORMATS,
   SCRIPT_HUB_TARGET_FORMATS,
   scriptHubSourceFormatLabel,
   scriptHubTargetFormatLabel,
+  suggestedScriptHubTargetFormat,
   type ScriptHubSourceFormat,
   type ScriptHubTargetFormat,
 } from "../utils/script_hub_adapter"
+import { fetchSourceText } from "../utils/source_fetcher"
 import {
   catalogItemModuleName,
   listGitHubRepositoryDirectory,
@@ -85,8 +88,23 @@ function sourceSubtitle(source: SourceConfig): string {
   return `${mode} · ${scriptHubTargetFormatLabel(source.target)} · ${category} · ${source.enabled ? "已启用" : "已停用"}`
 }
 
-function sourceFormatForItem(item: GitHubCatalogItem): ScriptHubSourceFormat {
-  return inferScriptHubSourceFormat(item.sourceURL ?? item.name)
+async function detectSourceFormatFromURL(sourceURL: string, fallbackValue = sourceURL) {
+  const fallback = detectScriptHubSourceFormat(fallbackValue)
+  try {
+    const response = await fetchSourceText(sourceURL, {
+      userAgent: "SurgeModulesManager/1.0",
+      debugLabel: "识别第三方模块格式",
+      maxChars: 512 * 1024,
+    })
+    return detectScriptHubSourceFormat(sourceURL, response.text)
+  } catch {
+    return fallback
+  }
+}
+
+async function detectCatalogItemFormat(item: GitHubCatalogItem) {
+  if (!item.sourceURL) return detectScriptHubSourceFormat(item.name)
+  return detectSourceFormatFromURL(item.sourceURL, item.name)
 }
 
 export function SourceManagementView(props: {
@@ -104,10 +122,12 @@ export function SourceManagementView(props: {
   const [repositoryPath, setRepositoryPath] = useState("")
   const [catalogItems, setCatalogItems] = useState<GitHubCatalogItem[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
+  const [detectingItemId, setDetectingItemId] = useState("")
   const [catalogError, setCatalogError] = useState("")
   const [moduleName, setModuleName] = useState("")
   const [sourceUserAgent, setSourceUserAgent] = useState("")
   const [sourceFormat, setSourceFormat] = useState<ScriptHubSourceFormat>("loon-plugin")
+  const [sourceFormatAuto, setSourceFormatAuto] = useState(true)
   const [targetFormat, setTargetFormat] = useState<ScriptHubTargetFormat>("surge-module")
   const [categoryIdx, setCategoryIdx] = useState(0)
   const [customCategory, setCustomCategory] = useState("")
@@ -133,12 +153,16 @@ export function SourceManagementView(props: {
     rawSourceURL: string,
     rawSourceFormat: ScriptHubSourceFormat = sourceFormat,
     rawModuleName = moduleName,
+    rawTargetFormat: ScriptHubTargetFormat = suggestedScriptHubTargetFormat(rawSourceFormat, targetFormat),
   ): string {
     const normalized = normalizeSourceURL(rawSourceURL.trim())
+    if (!isScriptHubSourceTargetCompatible(rawSourceFormat, rawTargetFormat)) {
+      throw new Error("QX 专属脚本只能转换为 Surge 脚本（兼容），不能直接转换为 Surge 模块")
+    }
     return buildScriptHubConversionURL({
       sourceURL: normalized,
       sourceFormat: rawSourceFormat,
-      targetFormat,
+      targetFormat: rawTargetFormat,
       moduleName: rawModuleName.trim() || deriveModuleNameFromSource(normalized),
       category: selectedCategory,
       sourceUserAgent,
@@ -173,6 +197,7 @@ export function SourceManagementView(props: {
       return
     }
     setCatalogLoading(true)
+    setDetectingItemId("")
     setCatalogError("")
     setSourceURL("")
     setModuleName("")
@@ -201,19 +226,29 @@ export function SourceManagementView(props: {
     if (!item.sourceURL) return
     setSourceURL(item.sourceURL)
     const itemModuleName = catalogItemModuleName(item)
-    const itemSourceFormat = sourceFormatForItem(item)
+    setDetectingItemId(item.id)
+    const detection = await detectCatalogItemFormat(item)
+    setDetectingItemId("")
+    const itemSourceFormat = detection.sourceFormat
+    const itemTargetFormat = detection.suggestedTargetFormat
+      ?? (itemSourceFormat !== "qx-script" && targetFormat === "surge-script" ? "surge-module" : targetFormat)
     setModuleName(itemModuleName)
     setSourceFormat(itemSourceFormat)
+    setSourceFormatAuto(true)
+    if (itemTargetFormat !== targetFormat) {
+      setTargetFormat(itemTargetFormat)
+      setAutoImport(itemTargetFormat === "surge-module")
+    }
 
     let convertedURL = ""
     try {
-      convertedURL = buildConversionURLFor(item.sourceURL, itemSourceFormat, itemModuleName)
+      convertedURL = buildConversionURLFor(item.sourceURL, itemSourceFormat, itemModuleName, itemTargetFormat)
     } catch (e: any) {
       await Dialog.alert({ title: "无法生成转换链接", message: String(e?.message ?? e) })
       return
     }
 
-    const canImport = targetCanWriteToSurge && autoImport
+    const canImport = itemTargetFormat === "surge-module" && autoImport
     const actions = canImport
       ? [
           { label: "转换并导入 Surge" },
@@ -227,8 +262,8 @@ export function SourceManagementView(props: {
     const selectedAction = await Dialog.actionSheet({
       title: item.name,
       message: canImport
-        ? "选择要执行的操作；点空白处或取消可关闭。"
-        : "当前设置只生成转换链接；点空白处或取消可关闭。",
+        ? `已识别：${scriptHubSourceFormatLabel(itemSourceFormat)} → ${scriptHubTargetFormatLabel(itemTargetFormat)}。选择要执行的操作；点空白处或取消可关闭。`
+        : `已识别：${scriptHubSourceFormatLabel(itemSourceFormat)} → ${scriptHubTargetFormatLabel(itemTargetFormat)}。当前只生成转换链接；点空白处或取消可关闭。`,
       cancelButton: true,
       actions,
     })
@@ -239,6 +274,7 @@ export function SourceManagementView(props: {
         sourceURL: item.sourceURL,
         moduleName: itemModuleName,
         sourceFormat: itemSourceFormat,
+        targetFormat: itemTargetFormat,
         conversionURL: convertedURL,
       })
       return
@@ -265,6 +301,7 @@ export function SourceManagementView(props: {
     setModuleName(selectedURL ? (source.moduleName || deriveModuleNameFromSource(selectedURL)) : "")
     setSourceUserAgent(source.sourceUserAgent ?? "")
     setSourceFormat(source.sourceKind)
+    setSourceFormatAuto(source.sourceFormatAuto !== false)
     setTargetFormat(source.target)
     const category = source.defaultCategory ?? ""
     const idx = categoryOptions.findIndex((item) => item === category)
@@ -277,6 +314,7 @@ export function SourceManagementView(props: {
     setRemoveSourceMetadata(source.removeSourceMetadata)
     setEnableJQ(source.enableJQ)
     setCatalogItems([])
+    setDetectingItemId("")
     setCatalogError("")
     setSourceSettingsExpanded(false)
     setConversionSettingsExpanded(false)
@@ -291,10 +329,12 @@ export function SourceManagementView(props: {
     setRepositoryBranch("main")
     setRepositoryPath("")
     setCatalogItems([])
+    setDetectingItemId("")
     setCatalogError("")
     setModuleName("")
     setSourceUserAgent("")
     setSourceFormat("loon-plugin")
+    setSourceFormatAuto(true)
     setTargetFormat("surge-module")
     setCategoryIdx(0)
     setCustomCategory("")
@@ -311,12 +351,14 @@ export function SourceManagementView(props: {
     sourceURL?: string
     moduleName?: string
     sourceFormat?: ScriptHubSourceFormat
+    targetFormat?: ScriptHubTargetFormat
   } = {}): SourceConfig | null {
     const trimmedName = name.trim()
     const trimmedRepositoryURL = repositoryURL.trim()
     const trimmedURL = (overrides.sourceURL ?? sourceURL).trim()
     const effectiveModuleName = overrides.moduleName ?? moduleName
     const effectiveSourceFormat = overrides.sourceFormat ?? sourceFormat
+    const effectiveTargetFormat = overrides.targetFormat ?? targetFormat
     if (!trimmedName) {
       void Dialog.alert({ message: "请填写来源名称" })
       return null
@@ -348,10 +390,11 @@ export function SourceManagementView(props: {
           moduleName: normalizedName,
           sourceUserAgent: sourceUserAgent.trim() || undefined,
           sourceKind: effectiveSourceFormat,
-          target: targetFormat,
+          sourceFormatAuto,
+          target: effectiveTargetFormat,
           defaultCategory: selectedCategory || undefined,
           saveDir: selectedSaveDir,
-          autoImport: targetCanWriteToSurge && autoImport,
+          autoImport: effectiveTargetFormat === "surge-module" && autoImport,
           keepOriginalLink,
           removeSourceMetadata,
           enableJQ,
@@ -367,10 +410,11 @@ export function SourceManagementView(props: {
           moduleName: normalizedName,
           sourceUserAgent: sourceUserAgent.trim() || undefined,
           sourceKind: effectiveSourceFormat,
-          target: targetFormat,
+          sourceFormatAuto,
+          target: effectiveTargetFormat,
           defaultCategory: selectedCategory,
           saveDir: selectedSaveDir,
-          autoImport: targetCanWriteToSurge && autoImport,
+          autoImport: effectiveTargetFormat === "surge-module" && autoImport,
           keepOriginalLink,
           removeSourceMetadata,
           enableJQ,
@@ -408,13 +452,30 @@ export function SourceManagementView(props: {
     sourceURL?: string
     moduleName?: string
     sourceFormat?: ScriptHubSourceFormat
+    targetFormat?: ScriptHubTargetFormat
     conversionURL?: string
   } = {}) {
     hideKeyboard()
     if (busy) return
     const effectiveSourceURL = (overrides.sourceURL ?? sourceURL).trim()
-    const effectiveSourceFormat = overrides.sourceFormat ?? sourceFormat
+    let effectiveSourceFormat = overrides.sourceFormat ?? sourceFormat
+    let effectiveTargetFormat = overrides.targetFormat ?? targetFormat
     const effectiveModuleName = overrides.moduleName ?? moduleName
+    if (!overrides.sourceFormat && sourceFormatAuto && effectiveSourceURL) {
+      const detection = await detectSourceFormatFromURL(effectiveSourceURL)
+      effectiveSourceFormat = detection.sourceFormat
+      if (detection.suggestedTargetFormat) effectiveTargetFormat = detection.suggestedTargetFormat
+      setSourceFormat(effectiveSourceFormat)
+      if (effectiveTargetFormat !== targetFormat) setTargetFormat(effectiveTargetFormat)
+      if (effectiveTargetFormat !== "surge-module") setAutoImport(false)
+    }
+    if (!isScriptHubSourceTargetCompatible(effectiveSourceFormat, effectiveTargetFormat)) {
+      await Dialog.alert({
+        title: "来源与目标格式不兼容",
+        message: "QX 专属脚本只能转换为 Surge 脚本（兼容），不能直接写入 Surge 模块目录。",
+      })
+      return
+    }
     let effectiveConversionURL = overrides.conversionURL ?? ""
     if (!effectiveConversionURL && effectiveSourceURL) {
       try {
@@ -422,6 +483,7 @@ export function SourceManagementView(props: {
           effectiveSourceURL,
           effectiveSourceFormat,
           effectiveModuleName,
+          effectiveTargetFormat,
         )
       } catch (e: any) {
         await Dialog.alert({ title: "无法生成转换链接", message: String(e?.message ?? e) })
@@ -432,6 +494,7 @@ export function SourceManagementView(props: {
       sourceURL: effectiveSourceURL,
       moduleName: effectiveModuleName,
       sourceFormat: effectiveSourceFormat,
+      targetFormat: effectiveTargetFormat,
     })
     if (!source) return
     if (!source.enabled) {
@@ -443,10 +506,10 @@ export function SourceManagementView(props: {
       return
     }
 
-    if (!targetCanWriteToSurge || !source.autoImport) {
+    if (effectiveTargetFormat !== "surge-module" || !source.autoImport) {
       await copyValue(effectiveConversionURL, "转换链接")
       await Dialog.alert({
-        message: targetCanWriteToSurge
+        message: effectiveTargetFormat === "surge-module"
           ? "已保存来源并复制转换链接；当前设置不会自动写入模块目录。"
           : "已复制目标格式转换链接。当前脚本只负责写入 Surge 模块，其他客户端请使用对应应用导入。",
       })
@@ -461,7 +524,7 @@ export function SourceManagementView(props: {
         sourceURL: effectiveSourceURL,
         convertedURL: effectiveConversionURL,
         sourceFormat: effectiveSourceFormat,
-        targetFormat,
+        targetFormat: effectiveTargetFormat,
         category: selectedCategory || undefined,
         saveDir: selectedSaveDir,
         keepOriginalLink: source.keepOriginalLink,
@@ -598,7 +661,9 @@ export function SourceManagementView(props: {
                 setMode(nextMode)
                 setSourceURL("")
                 setModuleName("")
+                setSourceFormatAuto(true)
                 setCatalogItems([])
+                setDetectingItemId("")
                 setCatalogError("")
                 if (nextMode === "direct") setRepositoryPath("")
               }}
@@ -622,6 +687,7 @@ export function SourceManagementView(props: {
                     setSourceURL("")
                     setModuleName("")
                     setCatalogItems([])
+                    setDetectingItemId("")
                     setRepositoryPath("")
                   }}
                   prompt="https://github.com/owner/repository"
@@ -679,6 +745,7 @@ export function SourceManagementView(props: {
                             <Text font="caption" foregroundStyle="secondaryLabel">
                               {item.kind === "directory"
                                 ? "打开目录"
+                                : detectingItemId === item.id ? "正在读取内容并识别格式…"
                                 : selected ? "已选择 · 点击打开操作" : "点击打开操作"}
                             </Text>
                           </VStack>
@@ -698,6 +765,13 @@ export function SourceManagementView(props: {
                 value={sourceURL}
                 onChanged={(value: string) => {
                   setSourceURL(value)
+                  setSourceFormatAuto(true)
+                  const detection = detectScriptHubSourceFormat(value)
+                  setSourceFormat(detection.sourceFormat)
+                  if (detection.suggestedTargetFormat) {
+                    setTargetFormat(detection.suggestedTargetFormat)
+                    setAutoImport(false)
+                  }
                   if (!moduleName.trim()) setModuleName(deriveModuleNameFromSource(value))
                 }}
                 prompt="https://.../example.plugin"
@@ -707,7 +781,16 @@ export function SourceManagementView(props: {
               <TextField
                 label={<Text>已选条目直链</Text>}
                 value={sourceURL}
-                onChanged={(value: string) => setSourceURL(value)}
+                onChanged={(value: string) => {
+                  setSourceURL(value)
+                  setSourceFormatAuto(true)
+                  const detection = detectScriptHubSourceFormat(value)
+                  setSourceFormat(detection.sourceFormat)
+                  if (detection.suggestedTargetFormat) {
+                    setTargetFormat(detection.suggestedTargetFormat)
+                    setAutoImport(false)
+                  }
+                }}
                 prompt="先从上面的目录选择文件"
               />
             ) : null}
@@ -780,10 +863,18 @@ export function SourceManagementView(props: {
             }}
           >
             <Picker
-              title="来源格式"
+              title={sourceFormatAuto ? "来源格式（自动识别）" : "来源格式（手动）"}
               pickerStyle="menu"
               value={Math.max(0, SCRIPT_HUB_SOURCE_FORMATS.findIndex((item) => item.value === sourceFormat))}
-              onChanged={(idx: number) => setSourceFormat(SCRIPT_HUB_SOURCE_FORMATS[idx]?.value ?? "loon-plugin")}
+              onChanged={(idx: number) => {
+                const next = SCRIPT_HUB_SOURCE_FORMATS[idx]?.value ?? "loon-plugin"
+                setSourceFormat(next)
+                setSourceFormatAuto(false)
+                if (next === "qx-script" && targetFormat !== "surge-script") {
+                  setTargetFormat("surge-script")
+                  setAutoImport(false)
+                }
+              }}
             >
               {SCRIPT_HUB_SOURCE_FORMATS.map((item, idx) => <Text key={item.value} tag={idx}>{item.label}</Text>)}
             </Picker>
@@ -793,6 +884,11 @@ export function SourceManagementView(props: {
               value={Math.max(0, SCRIPT_HUB_TARGET_FORMATS.findIndex((item) => item.value === targetFormat))}
               onChanged={(idx: number) => {
                 const next = SCRIPT_HUB_TARGET_FORMATS[idx]?.value ?? "surge-module"
+                if (sourceFormat === "qx-script" && next !== "surge-script") {
+                  setTargetFormat("surge-script")
+                  setAutoImport(false)
+                  return
+                }
                 setTargetFormat(next)
                 if (next !== "surge-module") setAutoImport(false)
               }}

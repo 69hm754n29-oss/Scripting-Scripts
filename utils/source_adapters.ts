@@ -22,6 +22,8 @@ export type SourceConfig = {
   moduleName?: string
   sourceUserAgent?: string
   sourceKind: SourceAdapterKind
+  /** Detect the source body on import unless the user explicitly overrides it. */
+  sourceFormatAuto: boolean
   target: ScriptHubTargetFormat
   converter: "script-hub-beta"
   enabled: boolean
@@ -111,6 +113,7 @@ function normalize(value: unknown, index: number): SourceConfig | null {
     moduleName: cleanOneLine(item.moduleName, 128) || undefined,
     sourceUserAgent: cleanOneLine(item.sourceUserAgent, 256) || undefined,
     sourceKind: validSourceFormat(item.sourceKind),
+    sourceFormatAuto: item.sourceFormatAuto !== false,
     target: validTargetFormat(item.target),
     converter: "script-hub-beta",
     enabled: item.enabled !== false,
@@ -173,6 +176,7 @@ export function saveSourceConfig(source: SourceConfig): SourceConfig {
     repositoryBranch: cleanOneLine(source.repositoryBranch, 200) || undefined,
     repositoryPath: cleanOneLine(source.repositoryPath, 512) || undefined,
     sourceKind: validSourceFormat(source.sourceKind),
+    sourceFormatAuto: source.sourceFormatAuto !== false,
     target: validTargetFormat(source.target),
     updatedAt: Date.now(),
   }
@@ -193,6 +197,7 @@ export function createSourceConfig(input: {
   moduleName?: string
   sourceUserAgent?: string
   sourceKind?: ScriptHubSourceFormat
+  sourceFormatAuto?: boolean
   target?: ScriptHubTargetFormat
   defaultCategory?: string
   saveDir?: string
@@ -216,6 +221,7 @@ export function createSourceConfig(input: {
     moduleName: cleanOneLine(input.moduleName, 128) || undefined,
     sourceUserAgent: cleanOneLine(input.sourceUserAgent, 256) || undefined,
     sourceKind: input.sourceKind ?? "loon-plugin",
+    sourceFormatAuto: input.sourceFormatAuto !== false,
     target: input.target ?? "surge-module",
     converter: "script-hub-beta",
     enabled: true,
