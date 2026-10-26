@@ -16,7 +16,7 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 脚本启动后分为两个页面：
 
-- `Scripting版`：管理、搜索、分类、刷新和写入 Surge 本地 `.sgmodule` 模块，支持备份、回滚、健康检查、文件分享、快捷指令和可选 Surge HTTP 控制。
+- `模块管理`：管理、搜索、分类、刷新和写入 Surge 本地 `.sgmodule` 模块，支持备份、回滚、健康检查、批量选择与 ShareSheet 分享、快捷指令和可选 Surge HTTP 控制。
 - `Script-Hub`：调用上游 Script-Hub 测试版完成格式识别与转换；本仓库只负责 UI、平台导入链接、结果复制和 Surge 本地写入。
 
 Script-Hub 页的目标平台会同步目标格式、扩展名和快速操作：
@@ -27,9 +27,10 @@ Script-Hub 页的目标平台会同步目标格式、扩展名和快速操作：
 | Loon | `loon://import` | `.plugin` 或规则集 |
 | Surge | `surge:///install-module`，或写入已授权目录 | `.sgmodule` 模块 |
 | Egern | `egern:/` | Surge 兼容模块或规则集 |
+| Shadowrocket | `shadowrocket://install?module=...` | Shadowrocket 模块；规则集不提供直接 Scheme，需复制结果 |
 | Scripting（模块导入） | `scripting://import_module` | `.sgmodule`（Surge）或 `.plugin`（Loon） |
 
-Scripting 在这里是原生模块导入入口，不是另一套代理配置格式；选择 Scripting 后，输出格式决定导入 Surge 模块还是 Loon 插件。Scriptable 仅作为兼容导入入口保留，不参与转换核心。来源和目标无法表达等价语义时，页面会提示并提供复制结果，不会伪装成可直接导入。
+Scripting 在这里是原生模块导入入口，不是另一套代理配置格式；选择 Scripting 后，输出格式决定导入 Surge 模块还是 Loon 插件。Shadowrocket 使用原生模块导入 Scheme，拉起失败时复制链接；规则集没有可靠的一键导入 Scheme，直接复制转换结果。Scriptable 仅作为兼容导入入口保留，不参与转换核心。来源和目标无法表达等价语义时，页面会提示并提供复制结果，不会伪装成可直接导入。
 
 应用不内置在线模块市场、不维护第三方站点列表，也不会自动扫描或分发第三方内容。单个插件或模块使用 HTTPS 直链即可。
 
@@ -39,6 +40,7 @@ Scripting 在这里是原生模块导入入口，不是另一套代理配置格�
 - Surge 已开启 iCloud，并能看到本地模块书签目录
 - 首次运行后，在“设置”中选择 Surge 使用的模块目录
 - Script-Hub 转换需要启用 Script-Hub 测试版对应模块和重写
+- 使用 Shadowrocket 平台时需要安装 Shadowrocket；上游不支持的脚本触发器或专属语义会显示兼容性提示
 - Scripting 原生“模块导入”不需要脚本名；选择 Scripting 平台后会通过 `scripting://import_module?url=...` 拉起模块导入页
 - “更多”中的旧版 Scripting 脚本桥接仍需要填写 Scripting 中显示的脚本名；如果重命名脚本，必须同步修改该桥接设置
 - 转换按钮会按你的选择把远程来源或本地文本、请求头和高级参数发送到 Script-Hub 测试版；不要填写 Cookie、Token 等敏感凭据
@@ -60,7 +62,7 @@ Scripting 在这里是原生模块导入入口，不是另一套代理配置格�
 4. 按需展开“高级转换参数”配置请求头、筛选、脚本兼容和运行参数。
 5. 先在“格式与目标”中选择目标平台；目标格式和快速操作会自动同步。
 6. 目标为 Surge 模块时，点击“转换并写入”会写入 Scripting 设置的 Surge 目录；也可以在结果页生成远程安装链接。
-7. QX、Loon、Egern、Scripting 的可用目标会生成对应 URL Scheme；Scripting 可在 Surge 模块与 Loon 插件之间切换。不支持直接拉起的组合请复制转换结果交给客户端。
+7. QX、Loon、Egern、Shadowrocket、Scripting 的可用目标会生成对应 URL Scheme；Scripting 可在 Surge 模块与 Loon 插件之间切换。不支持直接拉起的组合请复制转换结果交给客户端。
 
 不要打开转换链接后复制浏览器地址栏内容。浏览器地址栏中的链接可能未正确编码，复制后会导致参数异常。
 
@@ -68,12 +70,21 @@ Scripting 在这里是原生模块导入入口，不是另一套代理配置格�
 
 ## 管理模块
 
-- 打开“Scripting版”页面可刷新模块列表。
+- 打开“模块管理”页面可刷新模块列表。
 - 远程模块可以单独更新，也可以批量更新；覆盖前会自动备份。
 - 长按模块可预览更新、编辑、复制链接、查看内容、回滚或删除。
 - 添加模块时可以填写自定义分类，分类会立即持久化。
 - `.sgmodule` 文件可通过“文件”分享 → Scripting → 本脚本直接写入。
 - 模块写入后会重新读取目标文件，避免只提示成功但实际没有落盘。
+
+### 批量分享与导入
+
+1. 在“模块管理”进入批量选择，使用“全选”或“反选”，再点“分享”。
+2. 在系统分享面板中选择“快捷指令”或本脚本；也可以在“文件”中多选 `.sgmodule` 后直接分享。
+3. 脚本通过 Scripting 的 `File URLs` 接收文件列表，按文件名逐个读取、写入已授权的 Surge 目录并回读校验，不会只处理第一个文件。
+4. 同名文件会覆盖已有本地模块；某个文件失败不会阻止其他文件继续处理，结果会分别列出成功和失败项。
+
+若要交给快捷指令继续处理，请在脚本标题 → Intent 设置中启用 `File URLs`，并在快捷指令中使用“运行脚本”接收分享的文件。这个批量路径处理的是已有 `.sgmodule` 文件，不经过 Script-Hub 转换。
 
 ## 快捷指令
 
@@ -104,7 +115,7 @@ Scripting 在这里是原生模块导入入口，不是另一套代理配置格�
 
 ### 只想导入本地文件
 
-直接使用“文件”分享 → Scripting → 本脚本，不需要经过 Script-Hub 网络转换。
+直接使用“文件”分享 → Scripting → 本脚本，不需要经过 Script-Hub 网络转换；多选文件时会逐个写入 Surge 目录。
 
 ## 社区贡献
 

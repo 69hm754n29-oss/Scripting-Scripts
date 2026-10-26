@@ -398,17 +398,13 @@ async function runLocalFileImport(
   fileURLs: string[] | undefined,
   log: Logger,
 ): Promise<ShortcutUpdateResult | null> {
-  const files = fileURLs ?? []
-  const rawSource = files[0]
-  if (!rawSource) return null
-  if (files.length > 1) log(`local file input: ${files.length} files, importing the first one`)
+  const files = Array.from(new Set((fileURLs ?? []).map((value) => String(value ?? "").trim()).filter(Boolean)))
+  if (!files.length) return null
+  log(`local file input: ${files.length} files, importing all files`)
 
   const fm: any = (globalThis as any).FileManager
   if (!fm?.readAsString) throw new Error("FileManager.readAsString 不可用")
 
-  const sourcePath = localPathFromFileURL(rawSource)
-  const name = localModuleName(sourcePath)
-  log(`local file import requested: ${name}`)
   log("local import stage: resolving bookmarked folder")
   await withTimeout(
     () => ensureStorage(),
@@ -422,45 +418,73 @@ async function runLocalFileImport(
   )
   if (!baseDir) throw new Error("书签路径不可用，请在设置页重新选择书签文件夹")
 
-  log(`local import stage: reading ${name}`)
-  const content = await withTimeout(
-    () => fm.readAsString(sourcePath),
-    IMPORT_STAGE_TIMEOUT_MS,
-    `读取本地模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
-  )
-  const targetPath = moduleFilePath(name, baseDir)
-  const existing = await withTimeout(
-    () => loadModuleAtPath(targetPath),
-    IMPORT_STAGE_TIMEOUT_MS,
-    `读取目标模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${targetPath}`,
-  )
-  const result = await withTimeout(
-    () => writeModuleText(
-      {
-        name,
-        link: "",
-        category: existing?.category,
-        saveDir: baseDir,
-      },
-      baseDir,
-      String(content ?? ""),
-    ),
-    IMPORT_TOTAL_TIMEOUT_MS,
-    `本地模块写入超时（${IMPORT_TOTAL_TIMEOUT_MS / 1000}s）：${targetPath}`,
-  )
-  if (!result.ok) throw new Error(result.message ?? "本地模块写入失败")
+  const imported: { name: string; path: string; replaced: boolean }[] = []
+  const errors: string[] = []
+  const occupiedNames = new Set<string>()
 
-  const saved = await withTimeout(
-    () => loadModuleAtPath(result.path ?? targetPath),
-    IMPORT_STAGE_TIMEOUT_MS,
-    `读取导入结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
-  )
-  if (saved?.category) persistCategory(saved.category)
-  recordRecentImport(saved ?? { name, link: "", category: existing?.category })
+  for (const rawSource of files) {
+    let name = "本地模块"
+    try {
+      const sourcePath = localPathFromFileURL(rawSource)
+      name = localModuleName(sourcePath)
+      if (occupiedNames.has(name)) {
+        throw new Error(`批量输入中存在同名模块：${name}`)
+      }
+      occupiedNames.add(name)
+      log(`local file import requested: ${name}`)
 
-  log(`local import stage: write verified at ${result.path ?? "unknown"}`)
+      log(`local import stage: reading ${name}`)
+      const content = await withTimeout(
+        () => fm.readAsString(sourcePath),
+        IMPORT_STAGE_TIMEOUT_MS,
+        `读取本地模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
+      )
+      const targetPath = moduleFilePath(name, baseDir)
+      const existing = await withTimeout(
+        () => loadModuleAtPath(targetPath),
+        IMPORT_STAGE_TIMEOUT_MS,
+        `读取目标模块超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${targetPath}`,
+      )
+      const result = await withTimeout(
+        () => writeModuleText(
+          {
+            name,
+            link: "",
+            category: existing?.category,
+            saveDir: baseDir,
+          },
+          baseDir,
+          String(content ?? ""),
+        ),
+        IMPORT_TOTAL_TIMEOUT_MS,
+        `本地模块写入超时（${IMPORT_TOTAL_TIMEOUT_MS / 1000}s）：${targetPath}`,
+      )
+      if (!result.ok) throw new Error(result.message ?? "本地模块写入失败")
+
+      const saved = await withTimeout(
+        () => loadModuleAtPath(result.path ?? targetPath),
+        IMPORT_STAGE_TIMEOUT_MS,
+        `读取导入结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
+      )
+      if (saved?.category) persistCategory(saved.category)
+      recordRecentImport(saved ?? { name, link: "", category: existing?.category })
+      imported.push({ name, path: result.path ?? targetPath, replaced: !!existing })
+      log(`local import stage: write verified at ${result.path ?? "unknown"}`)
+    } catch (e: any) {
+      const message = String(e?.message ?? e)
+      errors.push(`${name}: ${message}`)
+      log(`local file import failed: ${name}: ${message}`)
+    }
+  }
+
+  const summary = [
+    `批量导入本地模块：成功 ${imported.length}/${files.length}`,
+    ...imported.map((item) => `✓ ${item.name}${item.replaced ? "（已覆盖）" : ""}`),
+    ...(errors.length ? ["", "失败：", ...errors.map((item) => `✕ ${item}`)] : []),
+    ...(imported.length ? ["", "请回到 Surge 刷新或重新启用这些本地模块。"] : []),
+  ]
   return {
-    text: `Surge 本地模块${existing ? "已覆盖" : "已导入"}：${name}\n写入路径：${result.path ?? "未返回路径"}\n请回到 Surge 刷新或重新启用该本地模块。`,
+    text: summary.join("\n"),
     logs: [],
   }
 }

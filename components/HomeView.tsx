@@ -632,6 +632,68 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     })
   }
 
+  async function shareSelectedModules() {
+    if (!selectedModules.length) {
+      await Dialog.alert({ message: "请先选择模块" })
+      return
+    }
+
+    const fm: any = (globalThis as any).FileManager
+    const paths = selectedModules
+      .map((item) => String(item.filePath ?? "").trim())
+      .filter(Boolean)
+    if (!paths.length) {
+      await Dialog.alert({ message: "所选模块没有可分享的本地文件" })
+      return
+    }
+
+    const existingPaths: string[] = []
+    for (const path of paths) {
+      const exists = typeof fm?.exists === "function"
+        ? await fm.exists(path)
+        : typeof fm?.existsSync === "function" ? fm.existsSync(path) : true
+      if (exists) existingPaths.push(path)
+    }
+    if (!existingPaths.length) {
+      await Dialog.alert({ message: "所选模块文件已不可用，请先刷新模块列表" })
+      return
+    }
+
+    const shareSheet: any = (globalThis as any).ShareSheet
+    if (typeof shareSheet?.present !== "function") {
+      await Dialog.alert({
+        title: "当前版本不支持批量分享",
+        message: "请升级 Scripting，或在“文件”中多选 .sgmodule 后分享给本脚本/捷径。",
+      })
+      return
+    }
+
+    const openedEntities: any[] = []
+    try {
+      const fileEntity: any = (globalThis as any).FileEntity
+      const items = existingPaths.map((path) => {
+        if (typeof fileEntity?.openForReading !== "function") return path
+        try {
+          const entity = fileEntity.openForReading(path)
+          openedEntities.push(entity)
+          return entity
+        } catch {
+          return path
+        }
+      })
+      setStage(`准备分享 ${existingPaths.length} 个模块…`)
+      const shared = await shareSheet.present(items)
+      setStage(shared ? `已分享 ${existingPaths.length} 个模块` : "已取消分享")
+    } catch (e: any) {
+      setStage(`分享失败：${String(e?.message ?? e)}`)
+      await Dialog.alert({ title: "批量分享失败", message: String(e?.message ?? e) })
+    } finally {
+      for (const entity of openedEntities) {
+        try { entity?.close?.() } catch {}
+      }
+    }
+  }
+
   async function openSettings() {
     await Navigation.present({
       element: (
@@ -1355,6 +1417,13 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
             onPress={deleteSelected}
           />
           <BatchCompactButton
+            title="分享"
+            systemImage="square.and.arrow.up"
+            tint="systemBlue"
+            disabled={busy || selectedModules.length === 0}
+            onPress={shareSelectedModules}
+          />
+          <BatchCompactButton
             title="完成"
             systemImage="checkmark"
             tint="systemBlue"
@@ -1380,7 +1449,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     <NavigationStack>
       <List
         sheet={releaseNotesSheet}
-        navigationTitle={"Scripting版"}
+        navigationTitle={"模块管理"}
         navigationBarTitleDisplayMode={"inline"}
         listStyle={"insetGroup"}
         toolbar={{

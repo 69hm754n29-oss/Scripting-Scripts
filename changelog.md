@@ -1,5 +1,22 @@
 # 更新日志
 
+## v4.2.3
+
+- 底部页签改为“模块管理”和“Script-Hub”，移除始终显示为 Surge 的当前平台提示。
+- 平台选择仍保留在 Script-Hub 页面内部，目标格式、快速导入和兼容提示继续随平台同步。
+
+## v4.2.2
+
+- 批量选择增加 ShareSheet 分享，可将多个本地 `.sgmodule` 一次交给快捷指令或本脚本。
+- `File URLs` 导入改为逐个读取、写入和回读校验，不再只导入第一个文件；失败项不会阻止其他文件继续处理，并在结果中单独列出。
+- 补充批量分享、快捷指令接收和文件多选导入文档。
+
+## v4.2.1
+
+- 补齐 Shadowrocket 平台选择，支持 `shadowrocket-module` 与 `shadowrocket-rule-set` 目标；模块可通过 `shadowrocket://install?module=...` 快速导入，规则集没有直接 Scheme 时退回复制。
+- Shadowrocket 目标沿用上游 Script-Hub 的兼容范围；不支持的脚本触发器和专属语义继续显示诊断，不静默转换。
+- README、脚本清单和安装说明同步补充 Shadowrocket 依赖与导入方式。
+
 ## v4.2.0
 
 - Script-Hub 页面增加 Quantumult X、Loon、Surge、Egern 目标平台选择，平台会同步目标格式、扩展名、快速操作和底部当前平台提示。

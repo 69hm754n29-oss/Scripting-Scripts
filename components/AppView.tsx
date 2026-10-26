@@ -17,7 +17,7 @@ export function AppView(props: { initialTab?: number; initialInput?: ScriptHubIn
     <TabView tabIndex={tabIndex} onTabIndexChanged={setTabIndex}>
       <HomeView
         tag={0}
-        tabItem={<Label title="Scripting版" systemImage="square.grid.2x2.fill" />}
+        tabItem={<Label title="模块管理" systemImage="square.grid.2x2.fill" />}
         refreshToken={refreshToken}
       />
       <ScriptHubView

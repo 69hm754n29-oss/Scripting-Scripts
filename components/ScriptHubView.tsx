@@ -48,7 +48,7 @@ import { recordRecentImport } from "../utils/recent_imports"
 
 type InputMode = "remote-url" | "local-text"
 
-type ScriptHubPlatform = "quantumult-x" | "loon" | "surge" | "egern" | "scripting"
+type ScriptHubPlatform = "quantumult-x" | "loon" | "surge" | "egern" | "shadowrocket" | "scripting"
 
 type ScriptHubPlatformOption = {
   value: ScriptHubPlatform
@@ -61,6 +61,7 @@ const SCRIPT_HUB_PLATFORMS: ScriptHubPlatformOption[] = [
   { value: "loon", label: "Loon", summary: "Loon 插件/规则集" },
   { value: "surge", label: "Surge", summary: "Surge 模块/规则集，可写入本地目录" },
   { value: "egern", label: "Egern", summary: "Egern 模块/规则集，兼容 Surge 格式" },
+  { value: "shadowrocket", label: "Shadowrocket", summary: "Shadowrocket 模块/规则集" },
   { value: "scripting", label: "Scripting（模块导入）", summary: "Scripting 原生模块导入，支持 Surge .sgmodule / Loon .plugin" },
 ]
 
@@ -329,14 +330,14 @@ function clientImportURL(
   if (platform === "egern" && target === "surge-module") {
     return "egern:/modules/new?name=" + encodedName + "&url=" + encodedResult
   }
+  if (platform === "shadowrocket" && target === "shadowrocket-module") {
+    return "shadowrocket://install?module=" + encodedResult
+  }
   if (platform === "scripting" && (target === "surge-module" || target === "loon-plugin")) {
     return "scripting://import_module?url=" + encodedResult
   }
   if (platform === "surge" && target === "surge-module") {
     return "surge:///install-module?url=" + encodedResult + "&name=" + encodedName
-  }
-  if (target === "shadowrocket-module") {
-    return "https://api.boxjs.app/shadowrocket/install?module=" + encodedResult
   }
   if (target === "stash-stoverride") {
     return "stash://install-override?url=" + encodedResult
@@ -403,6 +404,8 @@ function platformTargets(
       ? new Set<ScriptHubTargetFormat>(["surge-module", "surge-rule-set", "surge-domain-set", "surge-domain-set2", "plain-text"])
       : platform === "scripting"
         ? new Set<ScriptHubTargetFormat>(["surge-module", "loon-plugin"])
+      : platform === "shadowrocket"
+        ? new Set<ScriptHubTargetFormat>(["shadowrocket-module", "shadowrocket-rule-set", "plain-text"])
       : new Set<ScriptHubTargetFormat>([
         "surge-module",
         "surge-script",
@@ -429,6 +432,8 @@ function defaultPlatformTarget(
       ? sourceFormat === "rule-set" ? "loon-rule-set" : "loon-plugin"
       : platform === "egern"
         ? sourceFormat === "rule-set" ? "surge-rule-set" : "surge-module"
+        : platform === "shadowrocket"
+          ? sourceFormat === "rule-set" ? "shadowrocket-rule-set" : "shadowrocket-module"
         : platform === "scripting"
           ? sourceFormat === "loon-plugin" ? "loon-plugin" : "surge-module"
         : sourceFormat === "rule-set" ? "surge-rule-set" : "surge-module"
@@ -450,6 +455,8 @@ function targetLabelForPlatform(
   if (platform === "surge" && targetFormat === "surge-module") return "Surge 模块"
   if (platform === "egern" && targetFormat === "surge-module") return "Egern 模块"
   if (platform === "egern" && (targetFormat === "surge-rule-set" || targetFormat.includes("domain-set"))) return "Egern 规则集"
+  if (platform === "shadowrocket" && targetFormat === "shadowrocket-module") return "Shadowrocket 模块"
+  if (platform === "shadowrocket" && targetFormat === "shadowrocket-rule-set") return "Shadowrocket 规则集"
   if (platform === "scripting" && targetFormat === "surge-module") return "Scripting · Surge 模块"
   if (platform === "scripting" && targetFormat === "loon-plugin") return "Scripting · Loon 插件"
   return scriptHubTargetFormatLabel(targetFormat)
@@ -470,12 +477,14 @@ function platformCanQuickImport(
       || targetFormat === "surge-rule-set"
       || targetFormat.includes("domain-set")
   }
+  if (platform === "shadowrocket") return targetFormat === "shadowrocket-module"
   if (platform === "scripting") return targetFormat === "surge-module" || targetFormat === "loon-plugin"
   return targetFormat === "surge-module"
 }
 
 function platformForTarget(targetFormat: ScriptHubTargetFormat): ScriptHubPlatform {
   if (targetFormat === "loon-plugin" || targetFormat === "loon-rule-set") return "loon"
+  if (targetFormat === "shadowrocket-module" || targetFormat === "shadowrocket-rule-set") return "shadowrocket"
   if (targetFormat === "plain-text") return "quantumult-x"
   return "surge"
 }
@@ -1245,6 +1254,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                   ? "Loon 使用 loon://import 导入插件或规则集；不支持的来源会退回复制转换结果。"
                   : platform === "egern"
                     ? "Egern 使用 egern:/ Scheme 导入 Surge 兼容模块或规则集。"
+                    : platform === "shadowrocket"
+                      ? "Shadowrocket 模块可使用 shadowrocket://install 导入；规则集没有可靠的一键 Scheme 时请复制转换结果。"
                     : platform === "scripting"
                       ? "Scripting 原生模块导入支持 .sgmodule 和 .plugin；输出格式决定导入 Surge 还是 Loon。"
                     : "Surge 模块可写入已授权目录，也可生成 surge:///install-module 远程安装链接。"}
@@ -1578,7 +1589,9 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 <Button title="导入 Surge（远程模块）" systemImage="arrow.down.circle" action={() => { void openClientImport("surge") }} />
                 <Button title="导入 Egern 模块" systemImage="arrow.down.circle" action={() => { void openClientImport("egern") }} />
               </> : null}
-              <Button title="导入 Quantumult X / Loon" systemImage="arrow.down.circle" disabled={!targetCanQuickImport || (platform !== "quantumult-x" && platform !== "loon")} action={() => { void openClientImport("target") }} />
+              {(platform === "quantumult-x" || platform === "loon") ? (
+                <Button title="导入 Quantumult X / Loon" systemImage="arrow.down.circle" disabled={!targetCanQuickImport} action={() => { void openClientImport("target") }} />
+              ) : null}
               <Button title="导入 Scriptable" systemImage="square.and.arrow.down" action={() => { void openClientImport("scriptable") }} />
               <Button title="导入 Scripting（本地模块）" systemImage="square.and.arrow.down" disabled={!scriptingScriptName.trim()} action={() => { void openClientImport("scripting") }} />
               <Button title="复制原始来源" systemImage="doc.on.clipboard" action={() => { void copySource() }} />
@@ -1620,15 +1633,6 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               ) : null}
             </Section>
           ) : null}
-          <Text
-            font="caption"
-            foregroundStyle="secondaryLabel"
-            multilineTextAlignment="center"
-            frame={{ maxWidth: "infinity" }}
-            padding={{ top: 8, bottom: 12 }}
-          >
-            当前平台：{selectedPlatform.label}
-          </Text>
         </Form>
       </VStack>
     </NavigationStack>
