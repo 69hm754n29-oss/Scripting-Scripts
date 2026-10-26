@@ -5,7 +5,7 @@
     "autoUpdateInterval": null
   },
   "name": "Surge模块管理",
-  "description": "Surge 模块管理：管理、分类、下载/更新 Surge .sgmodule 模块，支持递归子文件夹、链接格式识别、本地模块、并发更新和 HTTP 远程开关控制。\n\nScript-Hub：点击其 Scripting 导入按钮即可下载为本地模块；接受 HTTPS 来源，并兼容 Script-Hub 的 http://script.hub 本地入口；同名不同来源不会静默覆盖。也支持从 iOS 文件分享已转换的 .sgmodule，直接写入 Surge 书签目录。\n\n第三方来源：来源管理区分单个插件/模块直链和用户主动填写的插件/模块市场仓库。市场目录按需加载，不内置站点、不分发内容、不递归扫描；Script-Hub 源格式和模块目标格式可选，只有 Surge 模块目标会写入本地 Surge 目录，其它目标复制转换链接。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。\n参数示例：\n1. 不传参数，或传 all / 全部：更新全部远程模块。\n2. 传分类名，例如 广告拦截：只更新该分类。\n3. 传 JSON：{\"category\":\"广告拦截\",\"dir\":\"子文件夹名称\",\"name\":\"模块名称\"}\n4. 传多个模块名：{\"names\":[\"模块1\",\"模块2\"]}\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回“书签路径不可用，请在设置页重新选择书签文件夹”。",
+  "description": "Surge 模块管理：在 Scripting版 页面管理、分类、刷新和写入 Surge .sgmodule 模块；在 Script-Hub 页面使用上游 Script-Hub 测试版转换核心。支持远程链接、本地文本、格式识别、模块名/文件名/分类/User-Agent/请求头/高级参数、预览、多端导入和 Surge 模块一键写入。\n\n脚本启动后分为 Scripting版 和 Script-Hub 两页，不内置在线模块市场，不维护第三方站点列表，也不会自动扫描或分发第三方内容。转换时会按用户操作把来源内容和参数发送到 Script-Hub 测试版，请勿填写敏感凭据。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。参数示例：不传参数或传 all 更新全部远程模块；传分类名更新指定分类；传 JSON 更新指定分类、目录或模块名。\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回书签路径不可用提示。",
   "localizedNames": {
     "de": "",
     "ja": "",
@@ -26,12 +26,12 @@
     "URLs"
   ],
   "localizedDescriptions": {
-    "en": "Manage, categorize, download, and update Surge .sgmodule files. Supports recursive folders, custom link prefixes, local modules, concurrent updates, and HTTP remote module toggles.\n\nScript-Hub: its Scripting import button downloads a converted module into the local bookmarked folder. HTTPS is required, with a narrow compatibility exception for Script-Hub's http://script.hub endpoint; a different source cannot silently overwrite the same name. You can also share a converted .sgmodule from iOS Files to write it directly into the Surge bookmark.\n\nThird-party sources: source management distinguishes a single plugin/module URL from a user-provided plugin/module marketplace repository. Marketplace directories load on demand without bundled sites, redistribution, or recursive crawling. Script-Hub source and module target formats are selectable; only Surge module targets are written locally, while other targets copy a conversion URL.\n\nShortcuts: run this script from Scripting to update modules.\nExamples:\n1. No input, or all: update all remote modules.\n2. Category text, e.g. Ads: update that category only.\n3. JSON: {\"category\":\"Ads\",\"dir\":\"Folder\",\"name\":\"Module Name\"}\n4. Multiple names: {\"names\":[\"Module 1\",\"Module 2\"]}\n\nA valid bookmarked folder must be selected in Settings. If bookmark permission is lost, the Shortcut returns an error asking you to reselect the folder.",
+    "en": "Manage, categorize, refresh, and write Surge .sgmodule files in the Scripting tab. The Script-Hub tab uses the upstream Script-Hub beta conversion core, accepts remote URLs or local text, exposes advanced conversion parameters, builds client import links, and writes Surge module targets into the authorized folder.\n\nThe app has no bundled online market, third-party site list, automatic crawler, or redistributed third-party content. Conversion input and selected parameters are sent to Script-Hub beta only when the user performs a conversion action; do not enter sensitive credentials.\n\nShortcuts can run this script from Scripting to update all modules, a category, or selected names. A valid Surge iCloud bookmark folder must be selected in Settings.",
     "ru": "",
     "pt": "",
     "fr": "",
     "de": "",
-    "zh": "Surge 模块管理：管理、分类、下载/更新 Surge .sgmodule 模块，支持递归子文件夹、链接格式识别、本地模块、并发更新和 HTTP 远程开关控制。\n\nScript-Hub：点击其 Scripting 导入按钮即可下载为本地模块；接受 HTTPS 来源，并兼容 Script-Hub 的 http://script.hub 本地入口；同名不同来源不会静默覆盖。也支持从 iOS 文件分享已转换的 .sgmodule，直接写入 Surge 书签目录。\n\n第三方来源：来源管理区分单个插件/模块直链和用户主动填写的插件/模块市场仓库。市场目录按需加载，不内置站点、不分发内容、不递归扫描；Script-Hub 源格式和模块目标格式可选，只有 Surge 模块目标会写入本地 Surge 目录，其它目标复制转换链接。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。\n参数示例：\n1. 不传参数，或传 all / 全部：更新全部远程模块。\n2. 传分类名，例如 广告拦截：只更新该分类。\n3. 传 JSON：{\"category\":\"广告拦截\",\"dir\":\"子文件夹名称\",\"name\":\"模块名称\"}\n4. 传多个模块名：{\"names\":[\"模块1\",\"模块2\"]}\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回“书签路径不可用，请在设置页重新选择书签文件夹”。",
+    "zh": "Surge 模块管理：在 Scripting版 页面管理、分类、刷新和写入 Surge .sgmodule 模块；在 Script-Hub 页面使用上游 Script-Hub 测试版转换核心。支持远程链接、本地文本、格式识别、模块名/文件名/分类/User-Agent/请求头/高级参数、预览、多端导入和 Surge 模块一键写入。\n\n脚本启动后分为 Scripting版 和 Script-Hub 两页，不内置在线模块市场，不维护第三方站点列表，也不会自动扫描或分发第三方内容。转换时会按用户操作把来源内容和参数发送到 Script-Hub 测试版，请勿填写敏感凭据。快捷指令可更新全部远程模块、指定分类或指定名称。",
     "ja": "",
     "it": "",
     "es": ""
@@ -43,5 +43,5 @@
     "name": "ranzhigg",
     "homepage": "https://github.com/ranzhigg"
   },
-  "version": "3.0.31"
+  "version": "4.0.1"
 }

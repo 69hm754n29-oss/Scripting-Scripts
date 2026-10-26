@@ -577,9 +577,9 @@ export function EditModuleView(props: {
                 )}
               </Section>
 
-              <Section header={<Text>自定义来源</Text>}>
+              <Section header={<Text>Script-Hub</Text>}>
                 <Text foregroundStyle="secondaryLabel" lineLimit={4}>
-                  不内置第三方在线库。需要使用自定义来源时，请回到主页底部“来源”，填写直链并通过 Script-Hub 转换后添加。
+                  需要转换插件或模块时，切换到 Script-Hub 页面填写 HTTPS 直链；Surge 模块目标可直接写入模块目录。
                 </Text>
               </Section>
             </>

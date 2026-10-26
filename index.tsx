@@ -70,7 +70,7 @@ async function run() {
   )
   if (await runExternalInput(incomingQueryParameters(Script.queryParameters))) return
 
-  // Plain `scripting://run/...` can resume an already visible HomeView. Keep a
+  // Plain `scripting://run/...` can resume an already visible app UI. Keep a
   // listener only for that long-lived UI path.
   const removeResumeHandler = Script.onResume((details) => {
     const queryParameters = incomingQueryParameters(details.queryParameters)
@@ -80,9 +80,9 @@ async function run() {
   })
 
   // Keep the headless URL/Shortcut path independent from the large UI tree.
-  // Scripting supports dynamic imports; load HomeView only for normal UI use.
-  const { HomeView } = await import("./components/HomeView")
-  await Navigation.present({ element: <HomeView /> })
+  // Scripting supports dynamic imports; load the two-tab app only for normal UI use.
+  const { AppView } = await import("./components/AppView")
+  await Navigation.present({ element: <AppView /> })
 
   removeResumeHandler()
   // 视图关闭后退出脚本（Scripting 推荐模式）

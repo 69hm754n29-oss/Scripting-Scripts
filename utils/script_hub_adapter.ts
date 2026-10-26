@@ -199,6 +199,14 @@ export function detectScriptHubSourceFormat(
         reason: "检测到 .script 独立脚本内容；目标应使用 Surge 脚本（兼容）",
       }
     }
+    if (looksLikeJavaScript(text)) {
+      return {
+        sourceFormat: "qx-rewrite",
+        suggestedTargetFormat: "surge-module",
+        confidence: "medium",
+        reason: "检测到 JavaScript 来源；按可转换模块源处理，目标使用 Surge 模块",
+      }
+    }
     if (/^\s*#!(?:name|desc|category|icon|author)\s*=/im.test(text)) {
       return { sourceFormat: "surge-module", confidence: "medium", reason: "检测到模块元数据" }
     }
@@ -250,13 +258,20 @@ export function suggestedScriptHubTargetFormat(
 
 export type ScriptHubConversionOptions = {
   sourceURL: string
+  /** Local text is sent to Script-Hub beta through its documented local.text route. */
+  localText?: string
   sourceFormat?: ScriptHubSourceFormat
   targetFormat?: ScriptHubTargetFormat
   moduleName?: string
+  /** Script-Hub's filename path component; plain-text may include its suffix. */
+  filename?: string
   category?: string
   sourceUserAgent?: string
+  headers?: string
   removeSourceMetadata?: boolean
   enableJQ?: boolean
+  /** Additional first-party Script-Hub options selected by the UI. */
+  extraParams?: Record<string, string | number | boolean | undefined>
 }
 
 const SCRIPT_HUB_ORIGIN = "http://script.hub"
@@ -273,7 +288,10 @@ function cleanOneLine(value: unknown, maxLength: number): string {
 
 export function deriveModuleNameFromSource(value: unknown): string {
   try {
-    const parsed = new URL(normalizeSourceURL(value))
+    const raw = String(value ?? "").trim()
+    const parsed = raw.startsWith("http://local.text")
+      ? new URL(raw)
+      : new URL(normalizeSourceURL(raw))
     const last = parsed.pathname.split("/").filter(Boolean).pop() ?? ""
     const decoded = decodeURIComponent(last)
       .replace(/\.(?:plugin|lpx|conf|sgmodule|stoverride|module|list|txt|js)$/i, "")
@@ -305,11 +323,121 @@ function encodeSourceRoutePart(sourceURL: string): string {
     .replace(/😂/g, "%F0%9F%98%82")
 }
 
+function normalizeScriptHubSourceURL(sourceURL: string): string {
+  if (String(sourceURL ?? "").trim() === "http://local.text") return "http://local.text"
+  const parts = String(sourceURL ?? "")
+    .split("😂")
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (!parts.length) throw new Error("来源地址为空")
+  return parts.map((item) => normalizeSourceURL(item)).join("😂")
+}
+
+function normalizeLocalText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .slice(0, 2 * 1024 * 1024)
+}
+
+const SCRIPT_HUB_EXTRA_PARAMS = new Set([
+  "n",
+  "icon",
+  "y",
+  "x",
+  "hnadd",
+  "hndel",
+  "hnregdel",
+  "jsc",
+  "jsc2",
+  "cron",
+  "cronexp",
+  "njsname",
+  "njsnametarget",
+  "timeoutt",
+  "timeoutv",
+  "enginet",
+  "enginev",
+  "policy",
+  "arg",
+  "argv",
+  "tiles",
+  "tcolor",
+  "cachexp",
+  "nocache",
+  "nore",
+  "synMitm",
+  "noNtf",
+  "wrap_response",
+  "compatibilityOnly",
+  "evalScriptori",
+  "evalScriptmodi",
+  "evalUrlori",
+  "evalUrlmodi",
+  "evJsori",
+  "evJsmodi",
+  "evUrlori",
+  "evUrlmodi",
+  "prepend",
+  "keepHeader",
+  "jsDelivr",
+  "sni",
+  "pm",
+])
+
+function normalizeFilename(
+  value: unknown,
+  moduleName: unknown,
+  sourceURL: string,
+  targetFormat: ScriptHubTargetFormat,
+): string {
+  const explicit = cleanOneLine(value, 160)
+  if (explicit) {
+    if (targetFormat === "plain-text") return explicit.replace(/[\\/]/g, "-")
+    return explicit
+      .replace(/\.(?:plugin|lpx|conf|sgmodule|stoverride|module|list|txt|js)$/i, "")
+      .replace(/[\\/]/g, "-")
+  }
+  const fallback = cleanOneLine(moduleName, 160)
+    || deriveModuleNameFromSource(sourceURL)
+    || `untitled-${Date.now()}`
+  return fallback.replace(/[\\/]/g, "-")
+}
+
+function normalizeHeaders(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim().slice(0, 512))
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 8192)
+}
+
+function sourceFilenameForPlainText(sourceURL: string): string {
+  try {
+    const raw = sourceURL.split("😂")[0]
+    const parsed = new URL(raw)
+    const last = parsed.pathname.split("/").filter(Boolean).pop() ?? ""
+    return cleanOneLine(decodeURIComponent(last), 160).replace(/[\\/]/g, "-")
+  } catch {
+    return ""
+  }
+}
+
 export function buildScriptHubConversionURL(options: ScriptHubConversionOptions): string {
-  const sourceURL = normalizeSourceURL(options.sourceURL)
-  const moduleName = normalizeModuleName(options.moduleName, sourceURL)
+  const localText = normalizeLocalText(options.localText)
+  const sourceURL = localText
+    ? "http://local.text"
+    : normalizeScriptHubSourceURL(options.sourceURL)
   const sourceFormat = options.sourceFormat ?? DEFAULT_SOURCE_TYPE
   const targetFormat = options.targetFormat ?? DEFAULT_TARGET_TYPE
+  const filename = normalizeFilename(
+    options.filename,
+    targetFormat === "plain-text" ? sourceFilenameForPlainText(sourceURL) || options.moduleName : options.moduleName,
+    sourceURL,
+    targetFormat,
+  )
   const removeSourceMetadata = options.removeSourceMetadata !== false
   const enableJQ = options.enableJQ !== false
   const params = [
@@ -320,12 +448,31 @@ export function buildScriptHubConversionURL(options: ScriptHubConversionOptions)
   ]
   const category = cleanOneLine(options.category, 64)
   if (category) params.push(`category=${encodeURIComponent(category)}`)
+  const headers = normalizeHeaders(options.headers)
   const sourceUserAgent = cleanOneLine(options.sourceUserAgent, 256)
-  if (sourceUserAgent) {
+  if (headers) {
+    params.push(`headers=${encodeURIComponent(headers)}`)
+  } else if (sourceUserAgent) {
     params.push(`headers=${encodeURIComponent(`User-Agent: ${sourceUserAgent}`)}`)
   }
+  if (localText) params.push(`localtext=${encodeURIComponent(localText)}`)
 
-  return `${SCRIPT_HUB_ORIGIN}/${scriptHubTargetPath(targetFormat)}/_start_/${encodeSourceRoutePart(sourceURL)}/_end_/${encodeURIComponent(moduleName)}${scriptHubTargetSuffix(targetFormat)}?${params.join("&")}`
+  const reserved = new Set(["type", "target", "del", "jqEnabled", "headers", "localtext"])
+  for (const [key, value] of Object.entries(options.extraParams ?? {})) {
+    const cleanKey = cleanOneLine(key, 64)
+    if (!cleanKey || reserved.has(cleanKey) || !SCRIPT_HUB_EXTRA_PARAMS.has(cleanKey) || value === undefined) continue
+    // Advanced Script-Hub fields include executable snippets and may contain
+    // newlines. Keep their content intact; only remove NUL and cap the value
+    // before URL encoding.
+    const cleanValue = String(value ?? "")
+      .replace(/\u0000/g, "")
+      .trim()
+      .slice(0, 128 * 1024)
+    if (!cleanValue) continue
+    params.push(`${encodeURIComponent(cleanKey)}=${encodeURIComponent(cleanValue)}`)
+  }
+
+  return `${SCRIPT_HUB_ORIGIN}/${scriptHubTargetPath(targetFormat)}/_start_/${encodeSourceRoutePart(sourceURL)}/_end_/${encodeURIComponent(filename)}${scriptHubTargetSuffix(targetFormat)}?${params.join("&")}`
 }
 
 export function isScriptHubConversionURL(value: unknown): boolean {
