@@ -24,6 +24,7 @@ import {
   normalizeModuleName,
   SCRIPT_HUB_SOURCE_FORMATS,
   SCRIPT_HUB_TARGET_FORMATS,
+  scriptHubSourceCategory,
   suggestedScriptHubTargetFormat,
   type ScriptHubSourceFormat,
   type ScriptHubTargetFormat,
@@ -244,6 +245,7 @@ async function runSharedSourceConversion(
   if (!request) return null
 
   let detection = detectScriptHubSourceFormat(request.sourceURL)
+  let nativeCategory = ""
   try {
     const source = await withTimeout(
       () => fetchSourceText(request.sourceURL, {
@@ -255,6 +257,7 @@ async function runSharedSourceConversion(
       `读取分享来源超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）`,
     )
     detection = detectScriptHubSourceFormat(request.sourceURL, source.text)
+    nativeCategory = scriptHubSourceCategory(source.text)
     log(`shared source format confidence=${detection.confidence}: ${detection.reason}`)
   } catch (e: any) {
     log(`shared source format fallback: ${String(e?.message ?? e)}`)
@@ -266,6 +269,7 @@ async function runSharedSourceConversion(
     throw new Error(`来源格式 ${sourceFormat} 不支持目标格式 ${targetFormat}`)
   }
 
+  const importCategory = request.category || nativeCategory || "插件"
   const name = normalizeModuleName(request.name || deriveModuleNameFromSource(request.sourceURL), request.sourceURL)
   const conversionURL = buildScriptHubConversionURL({
     sourceURL: request.sourceURL,
@@ -273,7 +277,7 @@ async function runSharedSourceConversion(
     targetFormat,
     moduleName: name,
     filename: request.filename,
-    category: request.category,
+    category: importCategory,
     sourceUserAgent: request.sourceUserAgent,
     headers: request.headers,
     removeSourceMetadata: request.removeSourceMetadata,
@@ -323,7 +327,7 @@ async function runSharedSourceConversion(
     name,
     link: conversionURL,
     sourceURL: request.sourceURL,
-    category: request.category || sameName?.category,
+    category: importCategory,
     saveDir: baseDir,
     isLocal: false,
   }
@@ -344,7 +348,7 @@ async function runSharedSourceConversion(
   recordRecentImport(saved ?? info)
   log(`shared source stage: write verified at ${result.path ?? "unknown"}`)
   return {
-    text: `分享链接已转换并写入 Surge 模块：${name}\n写入路径：${result.path ?? "未返回路径"}\n来源格式：${sourceFormat}\n目标格式：${targetFormat}\n请回到 Surge 刷新或重新启用该本地模块。`,
+    text: `分享链接已转换并写入 Surge 模块：${name}\n写入路径：${result.path ?? "未返回路径"}\n来源格式：${sourceFormat}\n目标格式：${targetFormat}\n分类：${importCategory}\n请回到 Surge 刷新或重新启用该本地模块。`,
     logs: [],
   }
 }

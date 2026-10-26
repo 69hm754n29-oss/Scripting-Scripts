@@ -30,6 +30,7 @@ import {
   normalizeModuleName,
   SCRIPT_HUB_SOURCE_FORMATS,
   SCRIPT_HUB_TARGET_FORMATS,
+  scriptHubSourceCategory,
   scriptHubSourceFormatLabel,
   scriptHubTargetFormatLabel,
   suggestedScriptHubTargetFormat,
@@ -329,6 +330,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const [moduleName, setModuleName] = useState("")
   const [categoryIdx, setCategoryIdx] = useState(0)
   const [customCategory, setCustomCategory] = useState("")
+  const [nativeCategory, setNativeCategory] = useState("")
+  const [categoryCustomized, setCategoryCustomized] = useState(false)
   const [sourceUserAgent, setSourceUserAgent] = useState("")
   const [keepOriginalLink, setKeepOriginalLink] = useState(true)
   const [removeSourceMetadata, setRemoveSourceMetadata] = useState(true)
@@ -339,8 +342,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const [status, setStatus] = useState("")
   const [detectedReason, setDetectedReason] = useState("")
   const [sourceSettingsExpanded, setSourceSettingsExpanded] = useState(true)
-  const [formatExpanded, setFormatExpanded] = useState(true)
-  const [outputExpanded, setOutputExpanded] = useState(true)
+  const [formatExpanded, setFormatExpanded] = useState(false)
+  const [outputExpanded, setOutputExpanded] = useState(false)
   const [typeGuideExpanded, setTypeGuideExpanded] = useState(false)
   const [advancedExpanded, setAdvancedExpanded] = useState(false)
   const [advancedSections, setAdvancedSections] = useState({
@@ -352,10 +355,17 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const [clientExpanded, setClientExpanded] = useState(false)
 
   const categories = cfg.categories ?? []
-  const categoryOptions = useMemo(() => ["不设置分类", ...categories], [categories])
-  const selectedCategory = customCategory.trim() || (
-    categoryOptions[categoryIdx] === "不设置分类" ? "" : categoryOptions[categoryIdx] ?? ""
-  )
+  const categoryOptions = useMemo(() => [
+    "插件",
+    "不设置分类",
+    ...categories.filter((item) => item !== "插件" && item !== "不设置分类"),
+  ], [categories])
+  const menuCategory = categoryOptions[categoryIdx] === "不设置分类"
+    ? ""
+    : categoryOptions[categoryIdx] ?? "插件"
+  const selectedCategory = categoryCustomized
+    ? customCategory.trim() || menuCategory
+    : nativeCategory || customCategory.trim() || menuCategory
   const targetOptions = useMemo(() => compatibleTargets(sourceFormat), [sourceFormat])
   const targetIndex = Math.max(0, targetOptions.findIndex((item) => item.value === targetFormat))
   const targetCanWriteToSurge = targetFormat === "surge-module"
@@ -379,6 +389,23 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
 
   function updateAdvancedSection(key: keyof typeof advancedSections, expanded: boolean) {
     setAdvancedSections((previous) => ({ ...previous, [key]: expanded }))
+  }
+
+  function applyNativeCategory(value: string): void {
+    const category = String(value ?? "").trim().slice(0, 64)
+    if (!category || categoryCustomized) return
+    setNativeCategory(category)
+    const index = categoryOptions.indexOf(category)
+    if (index >= 0) {
+      setCategoryIdx(index)
+      setCustomCategory("")
+    } else {
+      setCustomCategory(category)
+    }
+  }
+
+  function applyNativeCategoryFromText(value: string): void {
+    applyNativeCategory(scriptHubSourceCategory(value))
   }
 
   function advancedParams(): Record<string, string | number | boolean | undefined> {
@@ -507,6 +534,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       if (inputMode === "local-text") {
         const detection = detectScriptHubSourceFormat("local.txt", localText)
         setDetectedFormat(detection.sourceFormat, detection.reason, detection.suggestedTargetFormat)
+        applyNativeCategoryFromText(localText)
         if (!moduleName.trim()) setModuleName(sourceNameFromText(localText))
         setStatus(`已识别：${scriptHubSourceFormatLabel(detection.sourceFormat)}`)
         return
@@ -519,6 +547,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
         })
       const detection = detectScriptHubSourceFormat(raw, response.text)
       setDetectedFormat(detection.sourceFormat, detection.reason, detection.suggestedTargetFormat)
+      applyNativeCategoryFromText(response.text)
       if (!moduleName.trim()) setModuleName(deriveModuleNameFromSource(raw))
       setStatus(`已识别：${scriptHubSourceFormatLabel(detection.sourceFormat)}`)
     } catch (e: any) {
@@ -550,6 +579,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       const detection = detectScriptHubSourceFormat("clipboard.txt", text)
       if (!isActive()) return
       setDetectedFormat(detection.sourceFormat, detection.reason, detection.suggestedTargetFormat)
+      applyNativeCategoryFromText(text)
       setStatus("已读取内容并识别：" + scriptHubSourceFormatLabel(detection.sourceFormat))
       return
     }
@@ -565,6 +595,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       if (!isActive()) return
       const detection = detectScriptHubSourceFormat(text, response.text)
       setDetectedFormat(detection.sourceFormat, detection.reason, detection.suggestedTargetFormat)
+      applyNativeCategoryFromText(response.text)
       setStatus("已识别：" + scriptHubSourceFormatLabel(detection.sourceFormat))
     } catch (e: any) {
       if (!isActive()) return
@@ -612,8 +643,10 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       setInputMode(mode)
       setSourceFormatAuto(!provided?.sourceFormat)
       setDetectedReason("")
+      setNativeCategory("")
+      setCategoryCustomized(!!provided?.category?.trim())
       setSourceSettingsExpanded(true)
-      setFormatExpanded(true)
+      setFormatExpanded(false)
       hideKeyboard()
       if (mode === "remote-url") {
         setSourceURL(value)
@@ -774,6 +807,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     setModuleName("")
     setCategoryIdx(0)
     setCustomCategory("")
+    setNativeCategory("")
+    setCategoryCustomized(false)
     setSourceUserAgent("")
     setKeepOriginalLink(true)
     setRemoveSourceMetadata(true)
@@ -781,8 +816,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     setAdvanced({ ...DEFAULT_ADVANCED })
     setDetectedReason("")
     setSourceSettingsExpanded(true)
-    setFormatExpanded(true)
-    setOutputExpanded(true)
+    setFormatExpanded(false)
+    setOutputExpanded(false)
     setTypeGuideExpanded(false)
     setAdvancedExpanded(false)
     setAdvancedSections({ rewrite: false, script: false, schedule: false, runtime: false })
@@ -859,6 +894,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 const next: InputMode = idx === 1 ? "local-text" : "remote-url"
                 setInputMode(next)
                 setDetectedReason("")
+                setNativeCategory("")
+                if (!categoryCustomized) setCustomCategory("")
                 setSourceFormatAuto(true)
                 if (!moduleName.trim()) {
                   setModuleName(next === "local-text" ? sourceNameFromText(localText) : deriveModuleNameFromSource(sourceURL))
@@ -875,6 +912,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 onChanged={(value: string) => {
                   setSourceURL(value)
                   setDetectedReason("")
+                  setNativeCategory("")
+                  if (!categoryCustomized) setCustomCategory("")
                   if (!moduleName.trim()) setModuleName(deriveModuleNameFromSource(value))
                   if (sourceFormatAuto) {
                     const detection = detectScriptHubSourceFormat(value)
@@ -894,6 +933,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 onChanged={(value: string) => {
                   setLocalText(value)
                   setDetectedReason("")
+                  setNativeCategory("")
+                  if (!categoryCustomized) setCustomCategory("")
                   if (!moduleName.trim()) setModuleName(sourceNameFromText(value))
                   if (sourceFormatAuto) {
                     const detection = detectScriptHubSourceFormat("local.txt", value)
@@ -1013,39 +1054,61 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             }}
           >
             <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
-              名称、文件名和分类用于生成结果及写入 Surge 时的本地模块信息。
+              输出设置决定转换结果的名称、文件名、分类和模块元数据。留空时沿用来源信息；目标格式会自动决定文件扩展名。
+            </Text>
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              这些选项会写入 Script-Hub 转换参数；转换完成后，名称和分类也会用于本地 Surge 模块列表。
             </Text>
             <TextField
               label={<Text>模块名称</Text>}
               value={moduleName}
               onChanged={setModuleName}
-              prompt="默认从链接文件名或本地文本生成"
+              prompt="可选，默认从来源文件名或本地文本生成"
             />
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+              模块名称用于结果元数据和本地列表显示；不填写时自动取来源名称。
+            </Text>
             <TextField
               label={<Text>描述</Text>}
               value={advanced.description}
               onChanged={(value: string) => updateAdvanced("description", value)}
               prompt="可选，写入 Script-Hub n 参数"
             />
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+              描述只影响转换结果的说明信息，不会改变规则或脚本内容。
+            </Text>
             <TextField
               label={<Text>输出文件名</Text>}
               value={advanced.filename}
               onChanged={(value: string) => updateAdvanced("filename", value)}
-              prompt="可选，不含扩展名"
+              prompt="可选，不含扩展名；留空自动生成"
             />
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+              不要填写扩展名；目标格式会自动追加 .sgmodule、.plugin、.list 或其他后缀。
+            </Text>
             <Picker
               title="分类"
               pickerStyle="menu"
               value={Math.min(categoryIdx, Math.max(0, categoryOptions.length - 1))}
-              onChanged={setCategoryIdx}
+              onChanged={(idx: number) => {
+                setCategoryIdx(idx)
+                setCustomCategory("")
+                setCategoryCustomized(true)
+              }}
             >
               {categoryOptions.map((item, idx) => <Text key={`${item}-${idx}`} tag={idx}>{item}</Text>)}
             </Picker>
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              默认导入分类为“插件”；识别到来源内容自带分类时，优先使用脚本原生分类。手动选择或填写分类后，以手动设置为准。
+            </Text>
             <TextField
               label={<Text>自定义分类</Text>}
               value={customCategory}
-              onChanged={setCustomCategory}
-              prompt="可选，优先于上面的分类"
+              onChanged={(value: string) => {
+                setCustomCategory(value)
+                setCategoryCustomized(true)
+              }}
+              prompt="默认插件；来源自带分类时优先保留"
             />
             <TextField
               label={<Text>来源 User-Agent</Text>}
@@ -1053,6 +1116,12 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               onChanged={setSourceUserAgent}
               prompt="可选，例如 Example/1.0"
             />
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+              仅用于读取需要特定客户端标识的来源，不会写入转换后的模块。
+            </Text>
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              以下开关会影响转换链接中的元数据和兼容参数；一般情况下保持默认值即可。
+            </Text>
             <Toggle
               title="写入原始来源到模块"
               value={keepOriginalLink}
