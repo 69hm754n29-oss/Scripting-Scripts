@@ -1,6 +1,6 @@
 {
   "remoteResource": {
-    "url": "https://github.com/ranzhigg/Scripting-Scripts",
+    "url": "https://github.com/69hm754n29-oss/Scripting-Scripts",
     "hash": "",
     "autoUpdateInterval": null
   },
@@ -43,5 +43,5 @@
     "name": "ranzhigg",
     "homepage": "https://github.com/ranzhigg"
   },
-  "version": "4.2.3"
+  "version": "4.3.0"
 }

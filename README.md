@@ -5,18 +5,19 @@
 ## 导入地址
 
 ```text
-https://github.com/ranzhigg/Scripting-Scripts
+https://github.com/69hm754n29-oss/Scripting-Scripts
 ```
 
 在 Scripting 的“导入远程脚本”中直接粘贴仓库地址即可。当前脚本清单位于仓库根目录，不需要进入子目录。
 
-源码和文档：[GitHub 仓库](https://github.com/ranzhigg/Scripting-Scripts)
+源码和文档：[GitHub 仓库](https://github.com/69hm754n29-oss/Scripting-Scripts)
 
 ## 能力与平台
 
 脚本启动后分为两个页面：
 
 - `模块管理`：管理、搜索、分类、刷新和写入 Surge 本地 `.sgmodule` 模块，支持备份、回滚、健康检查、批量选择与 ShareSheet 分享、快捷指令和可选 Surge HTTP 控制。
+- 配置 Surge HTTP API 后，模块列表还会合并 Surge `/v1/modules` 的 `available` 清单；没有本地 `.sgmodule` 的 API-only 模块也可直接查看状态和开关，但不能进行本地文件编辑、更新、删除、回滚或分享。
 - `Script-Hub`：调用上游 Script-Hub 测试版完成格式识别与转换；本仓库只负责 UI、平台导入链接、结果复制和 Surge 本地写入。
 
 Script-Hub 页的目标平台会同步目标格式、扩展名和快速操作：
@@ -50,7 +51,7 @@ Scripting 在这里是原生模块导入入口，不是另一套代理配置格�
 ## 安装
 
 1. 打开 Scripting 的“导入远程脚本”。
-2. 粘贴 `https://github.com/ranzhigg/Scripting-Scripts` 并导入。
+2. 粘贴 `https://github.com/69hm754n29-oss/Scripting-Scripts` 并导入。
 3. 打开脚本，在“设置”中选择 Surge 的 iCloud 模块目录。
 4. 在项目标题的 Intent 设置中启用 `File URLs`、`URLs` 和 `Text`。
 

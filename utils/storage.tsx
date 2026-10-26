@@ -13,6 +13,8 @@ export type ModuleInfo = {
   filePath?: string
   saveDir?: string
   isLocal?: boolean
+  /** Listed by Surge HTTP API but not backed by a local .sgmodule file. */
+  isRemoteOnly?: boolean
   content?: string
 }
 

@@ -44,7 +44,7 @@ import { RemoteControlView } from "./RemoteControlView"
 import { SettingsView } from "./SettingsView"
 import { useMarkdownReleaseNotesSheet } from "./ReleaseNotesSheet"
 import {
-  fetchEnabledModuleNames,
+  fetchRemoteModuleSnapshot,
   getModuleRemoteName,
   setRemoteModuleEnabled,
 } from "../utils/remote_control"
@@ -59,7 +59,7 @@ import { recordRecentImport } from "../utils/recent_imports"
 
 function ModuleIcon(props: { module: ModuleInfo }) {
   const [failed, setFailed] = useState(false)
-  const isRemote = !!props.module.link
+  const isRemote = !!props.module.link || !!props.module.isRemoteOnly
   const fallbackName = isRemote ? "icloud.and.arrow.down.fill" : "puzzlepiece.extension.fill"
   const fallbackColor = isRemote ? "systemBlue" : "systemOrange"
   const frame = { width: 30, height: 30 }
@@ -340,12 +340,13 @@ function ModuleSummaryCard(props: {
   visible: number
   enabled: number
   remoteReady: boolean
+  remoteOnly: number
 }) {
   const visibleText = props.visible === props.total
     ? "全部显示"
     : `当前显示 ${props.visible} 个`
   const stateText = props.remoteReady
-    ? `远程已启用 ${props.enabled}/${props.total}`
+    ? `Surge 已启用 ${props.enabled}/${props.total} · API ${props.remoteOnly}`
     : "未配置远程控制"
 
   return (
@@ -471,10 +472,10 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     })
   }, [modules, filterCategory, filterDir, searchKey, baseDir])
   const selectedModules = filteredModules.filter((m) => selectedKeys.has(moduleKey(m)))
-  const selectedDownloadableCount = selectedModules.filter((m) => !!m.link).length
+  const selectedLocalModules = selectedModules.filter((m) => !m.isRemoteOnly)
+  const selectedDownloadableCount = selectedLocalModules.filter((m) => !!m.link).length
   const selectedRemoteCount = selectedModules.length
-  const onlyLocalFiltered =
-    filteredModules.length > 0 && filteredModules.every((m) => m.isLocal || !m.link)
+  const hasDownloadableFiltered = filteredModules.some((m) => !m.isRemoteOnly && !!m.link)
   const remoteControlReady = !!String(cfg.remotePort ?? "").trim()
   const enabledRemoteCount = useMemo(
     () => modules.filter((m) => enabledModuleNames.has(getModuleRemoteName(m))).length,
@@ -506,13 +507,14 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     resetStageOnSuccess = false,
     includeContent = false,
   ): Promise<boolean> {
+    let localModules: ModuleInfo[] = []
+    let localError = ""
+    let remoteError = ""
     try {
       await ensureStorage()
       const resolved = await getModulesDirResolved()
       setResolvedBaseDir(resolved)
-      const list = sortModules(await loadModules(resolved, includeContent))
-      setModules(list)
-      setContentIndexLoaded(includeContent)
+      localModules = await loadModules(resolved, includeContent)
       try {
         const subDirs = await listDirectSubDirs(resolved)
         setMoveTargets([
@@ -522,18 +524,45 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
       } catch {
         setMoveTargets(resolved ? [{ label: "根目录", path: resolved }] : [])
       }
-      if (resetStageOnSuccess) {
-        setStage("就绪")
-        setProgress(null)
-      }
-      return true
     } catch (e: any) {
-      setModules([])
+      localError = String(e?.message ?? e)
+      setResolvedBaseDir("")
       setMoveTargets([])
-      setContentIndexLoaded(false)
-      setStage(String(e?.message ?? e))
-      return false
     }
+
+    let remoteNames: string[] = []
+    try {
+      const snapshot = await fetchRemoteModuleSnapshot(loadConfig())
+      remoteNames = snapshot.available
+      setEnabledModuleNames(snapshot.enabled)
+    } catch (e: any) {
+      setEnabledModuleNames(new Set())
+      remoteError = `远程模块读取失败：${String(e?.message ?? e)}`
+    }
+
+    const localByRemoteName = new Set(localModules.map((m) => getModuleRemoteName(m)))
+    const remoteOnlyModules: ModuleInfo[] = remoteNames
+      .filter((name) => !localByRemoteName.has(name))
+      .map((name) => ({
+        name,
+        link: "",
+        surgeName: name,
+        isLocal: false,
+        isRemoteOnly: true,
+      }))
+    setModules(sortModules([...localModules, ...remoteOnlyModules]))
+    setContentIndexLoaded(includeContent && localModules.length > 0)
+
+    if (resetStageOnSuccess) {
+      const status = localError
+        ? `本地目录不可用，已显示 Surge 模块：${localError}`
+        : remoteError || "就绪"
+      setStage(status)
+      setProgress(null)
+    } else if (localError || remoteError) {
+      setStage(localError || remoteError)
+    }
+    return remoteNames.length > 0 || localModules.length > 0 || !localError
   }
 
   async function syncMetadataIfNeeded() {
@@ -639,7 +668,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     }
 
     const fm: any = (globalThis as any).FileManager
-    const paths = selectedModules
+    const paths = selectedLocalModules
       .map((item) => String(item.filePath ?? "").trim())
       .filter(Boolean)
     if (!paths.length) {
@@ -728,13 +757,23 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   async function refreshRemoteModules(silent = false, nextCfg: AppConfig = cfg) {
     if (!String(nextCfg.remotePort ?? "").trim()) {
       setEnabledModuleNames(new Set())
+      setModules((current) => current.filter((m) => !m.isRemoteOnly))
       return
     }
     try {
-      const enabled = await fetchEnabledModuleNames(nextCfg)
-      setEnabledModuleNames(enabled)
+      const snapshot = await fetchRemoteModuleSnapshot(nextCfg)
+      setEnabledModuleNames(snapshot.enabled)
+      setModules((current) => {
+        const local = current.filter((m) => !m.isRemoteOnly)
+        const localNames = new Set(local.map((m) => getModuleRemoteName(m)))
+        const remoteOnly = snapshot.available
+          .filter((name) => !localNames.has(name))
+          .map((name) => ({ name, link: "", surgeName: name, isLocal: false, isRemoteOnly: true }))
+        return sortModules([...local, ...remoteOnly])
+      })
     } catch (e: any) {
       setEnabledModuleNames(new Set())
+      setModules((current) => current.filter((m) => !m.isRemoteOnly))
       if (!silent) setStage(`远程状态获取失败：${String(e?.message ?? e)}`)
     }
   }
@@ -836,6 +875,10 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function modifyModuleFor(target: ModuleInfo) {
+    if (target.isRemoteOnly || !target.filePath) {
+      await Dialog.alert({ message: "Surge API 模块没有本地文件，不能在这里编辑" })
+      return
+    }
     const current = modules
     const subDirs = await listDirectSubDirs()
     const originalSaveDir = inferSaveDir(target)
@@ -910,6 +953,10 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function viewModuleContent(target: ModuleInfo) {
+    if (target.isRemoteOnly || !target.filePath) {
+      await Dialog.alert({ message: "Surge API 只返回模块名称，没有可读取的本地内容" })
+      return
+    }
     try {
       const fm: any = (globalThis as any).FileManager
       if (!fm?.readAsString) throw new Error("FileManager.readAsString 不可用")
@@ -977,7 +1024,11 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function restoreModuleFor(target: ModuleInfo) {
-    const path = target.filePath ?? moduleFilePath(target.name)
+    if (target.isRemoteOnly || !target.filePath) {
+      await Dialog.alert({ message: "Surge API 模块没有本地备份可回滚" })
+      return
+    }
+    const path = target.filePath
     setBusy(true)
     setStage(`读取备份：${target.name}`)
     try {
@@ -1015,6 +1066,10 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function deleteModuleFor(target: ModuleInfo) {
+    if (target.isRemoteOnly || !target.filePath) {
+      await Dialog.alert({ message: "Surge API 模块没有本地文件可删除" })
+      return
+    }
     const ok = await Dialog.confirm({
       title: "删除模块",
       message: `确定删除模块：${target.name}？`,
@@ -1155,21 +1210,21 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function downloadSelected() {
-    if (!selectedModules.length) {
-      await Dialog.alert({ message: "请先选择模块" })
+    if (!selectedLocalModules.length) {
+      await Dialog.alert({ message: "所选模块没有本地源文件，无法更新" })
       return
     }
-    await downloadBatch(selectedModules, `批量更新：${selectedModules.length} 个模块…`)
+    await downloadBatch(selectedLocalModules, `批量更新：${selectedLocalModules.length} 个模块…`)
   }
 
   async function deleteSelected() {
-    if (!selectedModules.length) {
-      await Dialog.alert({ message: "请先选择模块" })
+    if (!selectedLocalModules.length) {
+      await Dialog.alert({ message: "所选模块都来自 Surge API，没有可删除的本地文件" })
       return
     }
     const ok = await Dialog.confirm({
       title: "批量删除",
-      message: `确定删除已选的 ${selectedModules.length} 个模块？`,
+      message: `确定删除已选的 ${selectedLocalModules.length} 个本地模块？`,
     })
     if (!ok) return
 
@@ -1177,7 +1232,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     setStage("批量删除中…")
     setProgress(null)
     try {
-      for (const item of selectedModules) {
+      for (const item of selectedLocalModules) {
         await removeModuleFile(item)
       }
       exitSelectionMode()
@@ -1192,8 +1247,8 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function moveSelectedTo(targetDir: string) {
-    if (!selectedModules.length) {
-      await Dialog.alert({ message: "请先选择模块" })
+    if (!selectedLocalModules.length) {
+      await Dialog.alert({ message: "所选模块都来自 Surge API，没有可移动的本地文件" })
       return
     }
 
@@ -1202,7 +1257,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     setProgress(null)
     try {
       const finalDir = targetDir || (await getModulesDirResolved())
-      for (const item of selectedModules) {
+      for (const item of selectedLocalModules) {
         await moveModuleFile(item, finalDir, item.name)
       }
       exitSelectionMode()
@@ -1560,7 +1615,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                     title="更新全部"
                     systemImage="arrow.triangle.2.circlepath"
                     tint="systemGreen"
-                    disabled={busy || onlyLocalFiltered}
+                    disabled={busy || !hasDownloadableFiltered}
                     onPress={downloadAll}
                   />
                 </HStack>
@@ -1581,6 +1636,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
               visible={filteredModules.length}
               enabled={enabledRemoteCount}
               remoteReady={remoteControlReady}
+              remoteOnly={modules.filter((m) => m.isRemoteOnly).length}
             />
             <HStack spacing={8} frame={{ maxWidth: "infinity" }}>
               {chipOptions.map((item, idx) => (
@@ -1629,7 +1685,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                 return (
                   <VStack
                     key={`${m.name}-${m.link}`}
-                    contextMenu={selectionMode ? undefined : {
+                    contextMenu={selectionMode || m.isRemoteOnly ? undefined : {
                       menuItems: (
                         <Group>
                           {m.link ? (
@@ -1637,14 +1693,16 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                           ) : null}
                           <Button title="查看模块" action={withButtonHaptic(() => viewModuleContent(m))} />
                           <Button title="回滚版本" action={withButtonHaptic(() => restoreModuleFor(m))} />
-                          <Button title="复制链接" action={withButtonHaptic(() => copyModuleLink(m))} />
+                          {m.link ? (
+                            <Button title="复制链接" action={withButtonHaptic(() => copyModuleLink(m))} />
+                          ) : null}
                           <Button title="删除" role="destructive" action={withButtonHaptic(() => deleteModuleFor(m))} />
                         </Group>
                       ),
                     }}
                     leadingSwipeActions={{
                       allowsFullSwipe: false,
-                      actions: selectionMode ? [] : [
+                      actions: selectionMode || m.isRemoteOnly ? [] : [
                         <Button
                           title="更新"
                           tint={m.link ? "systemGreen" : "systemGray"}
@@ -1655,7 +1713,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                     }}
                     trailingSwipeActions={{
                       allowsFullSwipe: false,
-                      actions: selectionMode ? [] : [
+                      actions: selectionMode || m.isRemoteOnly ? [] : [
                         <Button title="编辑" tint="systemOrange" action={withButtonHaptic(() => modifyModuleFor(m))} />,
                       ],
                     }}
@@ -1672,7 +1730,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                       <VStack alignment="leading" spacing={3}>
                         <Text font="headline">{m.name}</Text>
                         <Text font="caption" foregroundStyle="secondaryLabel">
-                          {m.category ? `${m.category} · ` : ""}{m.link ? "远程模块" : "本地模块"}
+                          {m.category ? `${m.category} · ` : ""}{m.isRemoteOnly ? "Surge API 模块" : m.link ? "远程源模块" : "本地模块"}
                         </Text>
                       </VStack>
                       <Spacer />

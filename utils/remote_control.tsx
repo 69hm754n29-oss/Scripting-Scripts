@@ -8,6 +8,11 @@ export type RemoteConnectionResult = {
   enabledCount: number
 }
 
+export type RemoteModuleSnapshot = {
+  available: string[]
+  enabled: Set<string>
+}
+
 export function getRemoteBaseURL(cfg: AppConfig): string {
   const host = String(cfg.remoteHost ?? "http://127.0.0.1").trim() || "http://127.0.0.1"
   const port = String(cfg.remotePort ?? "").trim()
@@ -25,25 +30,22 @@ function remoteHeaders(cfg: AppConfig): Record<string, string> {
   }
 }
 
-function parseEnabledNames(data: any): Set<string> {
-  const enabled = data?.enabled
-  if (Array.isArray(enabled)) {
-    return new Set(enabled.map((x) => String(x).trim()).filter(Boolean))
+function parseNames(value: any): string[] {
+  if (Array.isArray(value)) {
+    return value.map((x) => String(x).trim()).filter(Boolean)
   }
-  if (enabled && typeof enabled === "object") {
-    return new Set(
-      Object.entries(enabled)
-        .filter(([, value]) => !!value)
-        .map(([key]) => String(key).trim())
-        .filter(Boolean)
-    )
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, enabled]) => !!enabled)
+      .map(([name]) => String(name).trim())
+      .filter(Boolean)
   }
-  return new Set()
+  return []
 }
 
-export async function fetchEnabledModuleNames(cfg: AppConfig): Promise<Set<string>> {
+export async function fetchRemoteModuleSnapshot(cfg: AppConfig): Promise<RemoteModuleSnapshot> {
   const baseURL = getRemoteBaseURL(cfg)
-  if (!baseURL) return new Set()
+  if (!baseURL) return { available: [], enabled: new Set() }
   const fetchFn: any = (globalThis as any).fetch
   if (typeof fetchFn !== "function") throw new Error("fetch 不可用")
 
@@ -57,7 +59,14 @@ export async function fetchEnabledModuleNames(cfg: AppConfig): Promise<Set<strin
   )
   if (!res?.ok) throw new Error(`请求失败：${res?.status ?? "unknown"}`)
   const data = await res.json()
-  return parseEnabledNames(data)
+  return {
+    available: Array.from(new Set(parseNames(data?.available))),
+    enabled: new Set(parseNames(data?.enabled)),
+  }
+}
+
+export async function fetchEnabledModuleNames(cfg: AppConfig): Promise<Set<string>> {
+  return (await fetchRemoteModuleSnapshot(cfg)).enabled
 }
 
 /**

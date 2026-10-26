@@ -1,5 +1,12 @@
 # 更新日志
 
+## v4.3.0
+
+- HTTP 远程控制现在读取 Surge `/v1/modules` 的 `available` 清单。
+- 没有本地 `.sgmodule` 文件时，Surge 模块仍会显示并可直接开关。
+- API-only 模块不再提供本地编辑、更新、删除、回滚和分享操作。
+- 本地目录不可用时，模块列表仍会显示 Surge HTTP API 返回的模块。
+
 ## v4.2.3
 
 - 底部页签改为“模块管理”和“Script-Hub”，移除始终显示为 Surge 的当前平台提示。
