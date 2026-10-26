@@ -127,6 +127,7 @@ export function SourceManagementView(props: {
   )
   const selectedSaveDir = saveDirIdx > 0 ? props.saveDirs[saveDirIdx - 1] : undefined
   const targetCanWriteToSurge = targetFormat === "surge-module"
+  const hasConversionSource = !!sourceURL.trim()
 
   function buildConversionURLFor(
     rawSourceURL: string,
@@ -173,6 +174,8 @@ export function SourceManagementView(props: {
     }
     setCatalogLoading(true)
     setCatalogError("")
+    setSourceURL("")
+    setModuleName("")
     try {
       const result = await listGitHubRepositoryDirectory(rawRepositoryURL, repositoryBranch.trim(), path)
       setRepositoryBranch(result.ref.branch)
@@ -257,7 +260,7 @@ export function SourceManagementView(props: {
     setRepositoryURL(source.repositoryURL ?? (isMarketplace ? source.sourceURL : ""))
     setRepositoryBranch(source.repositoryBranch ?? "main")
     setRepositoryPath(source.repositoryPath ?? "")
-    const selectedURL = isMarketplace && source.repositoryURL === source.sourceURL ? "" : source.sourceURL
+    const selectedURL = isMarketplace ? "" : source.sourceURL
     setSourceURL(selectedURL)
     setModuleName(selectedURL ? (source.moduleName || deriveModuleNameFromSource(selectedURL)) : "")
     setSourceUserAgent(source.sourceUserAgent ?? "")
@@ -593,6 +596,8 @@ export function SourceManagementView(props: {
                 hideKeyboard()
                 const nextMode: SourceMode = idx === 1 ? "marketplace" : "direct"
                 setMode(nextMode)
+                setSourceURL("")
+                setModuleName("")
                 setCatalogItems([])
                 setCatalogError("")
                 if (nextMode === "direct") setRepositoryPath("")
@@ -614,6 +619,8 @@ export function SourceManagementView(props: {
                   value={repositoryURL}
                   onChanged={(value: string) => {
                     setRepositoryURL(value)
+                    setSourceURL("")
+                    setModuleName("")
                     setCatalogItems([])
                     setRepositoryPath("")
                   }}
@@ -721,46 +728,48 @@ export function SourceManagementView(props: {
             </Text>
           </DisclosureGroup>
 
-          <Section header={<Text>转换操作</Text>}>
-            {conversionResult.error ? (
-              <Text foregroundStyle={mode === "marketplace" && !sourceURL ? "secondaryLabel" : "systemRed"}>
-                {conversionResult.error}
-              </Text>
-            ) : (
-              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={4}>
-                {conversionResult.url || "选择条目后生成转换链接"}
-              </Text>
-            )}
-            <HStack spacing={8}>
+          {hasConversionSource ? (
+            <Section header={<Text>转换操作</Text>}>
+              {conversionResult.error ? (
+                <Text foregroundStyle={mode === "marketplace" && !sourceURL ? "secondaryLabel" : "systemRed"}>
+                  {conversionResult.error}
+                </Text>
+              ) : (
+                <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={4}>
+                  {conversionResult.url || "选择条目后生成转换链接"}
+                </Text>
+              )}
+              <HStack spacing={8}>
+                <SourceActionButton
+                  title="复制原始"
+                  systemImage="doc.on.doc"
+                  tint="systemBlue"
+                  fullWidth
+                  disabled={!sourceURL.trim()}
+                  onPress={() => copyValue(sourceURL.trim(), "原始链接")}
+                />
+                <SourceActionButton
+                  title="复制转换"
+                  systemImage="arrow.triangle.2.circlepath"
+                  tint="systemPurple"
+                  fullWidth
+                  disabled={!conversionResult.url}
+                  onPress={() => copyValue(conversionResult.url, "转换链接")}
+                />
+              </HStack>
               <SourceActionButton
-                title="复制原始"
-                systemImage="doc.on.doc"
-                tint="systemBlue"
+                title={targetCanWriteToSurge && autoImport ? "转换并添加" : "复制转换链接"}
+                systemImage={targetCanWriteToSurge && autoImport ? "plus.circle.fill" : "doc.on.clipboard"}
+                tint="systemGreen"
                 fullWidth
-                disabled={!sourceURL.trim()}
-                onPress={() => copyValue(sourceURL.trim(), "原始链接")}
+                disabled={busy || !conversionResult.url}
+                onPress={importCurrent}
               />
-              <SourceActionButton
-                title="复制转换"
-                systemImage="arrow.triangle.2.circlepath"
-                tint="systemPurple"
-                fullWidth
-                disabled={!conversionResult.url}
-                onPress={() => copyValue(conversionResult.url, "转换链接")}
-              />
-            </HStack>
-            <SourceActionButton
-              title={targetCanWriteToSurge && autoImport ? "转换并添加" : "复制转换链接"}
-              systemImage={targetCanWriteToSurge && autoImport ? "plus.circle.fill" : "doc.on.clipboard"}
-              tint="systemGreen"
-              fullWidth
-              disabled={busy || !conversionResult.url}
-              onPress={importCurrent}
-            />
-            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
-              {scriptHubSourceFormatLabel(sourceFormat)} → {scriptHubTargetFormatLabel(targetFormat)}
-            </Text>
-          </Section>
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                {scriptHubSourceFormatLabel(sourceFormat)} → {scriptHubTargetFormatLabel(targetFormat)}
+              </Text>
+            </Section>
+          ) : null}
 
           <DisclosureGroup
             title="转换设置"

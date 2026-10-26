@@ -13,7 +13,7 @@ export type SourceConfig = {
   id: string
   name: string
   mode: SourceMode
-  /** Direct module URL, or the last selected module in a marketplace. */
+  /** Direct module URL, or the repository URL for a marketplace. */
   sourceURL: string
   /** User-supplied marketplace repository; never bundled by the app. */
   repositoryURL?: string
@@ -84,11 +84,15 @@ function normalize(value: unknown, index: number): SourceConfig | null {
     }
   }
   let sourceURL = ""
-  if (String(item.sourceURL ?? "").trim()) {
+  if (mode === "marketplace") {
+    // Older versions persisted the last selected module here. Normalize those
+    // records to the repository so a stale module is never shown on reopen.
+    sourceURL = repositoryURL
+  } else if (String(item.sourceURL ?? "").trim()) {
     try {
       sourceURL = normalizeSourceURL(item.sourceURL)
     } catch {
-      if (mode === "direct") return null
+      return null
     }
   }
   if (!sourceURL) sourceURL = repositoryURL
@@ -162,7 +166,9 @@ export function saveSourceConfig(source: SourceConfig): SourceConfig {
     ...source,
     mode,
     name: cleanOneLine(source.name, 80),
-    sourceURL: normalizeSourceURL(source.sourceURL),
+    sourceURL: mode === "marketplace"
+      ? normalizeSourceURL(source.repositoryURL || source.sourceURL)
+      : normalizeSourceURL(source.sourceURL),
     repositoryURL,
     repositoryBranch: cleanOneLine(source.repositoryBranch, 200) || undefined,
     repositoryPath: cleanOneLine(source.repositoryPath, 512) || undefined,
@@ -195,11 +201,15 @@ export function createSourceConfig(input: {
   removeSourceMetadata?: boolean
   enableJQ?: boolean
 }): SourceConfig {
+  const mode: SourceMode = input.mode === "marketplace" ? "marketplace" : "direct"
+  const sourceURL = mode === "marketplace"
+    ? String(input.repositoryURL || input.sourceURL).trim()
+    : String(input.sourceURL ?? "").trim()
   return {
     id: `source-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: cleanOneLine(input.name, 80),
-    sourceURL: String(input.sourceURL ?? "").trim(),
-    mode: input.mode === "marketplace" ? "marketplace" : "direct",
+    sourceURL,
+    mode,
     repositoryURL: String(input.repositoryURL ?? "").trim() || undefined,
     repositoryBranch: cleanOneLine(input.repositoryBranch, 200) || undefined,
     repositoryPath: cleanOneLine(input.repositoryPath, 512) || undefined,
