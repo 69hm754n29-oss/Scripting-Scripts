@@ -12,33 +12,24 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 源码和文档：[GitHub 仓库](https://github.com/ranzhigg/Scripting-Scripts)
 
-## 页面结构
+## 能力与平台
 
 脚本启动后分为两个页面：
 
-### Scripting版
+- `Scripting版`：管理、搜索、分类、刷新和写入 Surge 本地 `.sgmodule` 模块，支持备份、回滚、健康检查、文件分享、快捷指令和可选 Surge HTTP 控制。
+- `Script-Hub`：调用上游 Script-Hub 测试版完成格式识别与转换；本仓库只负责 UI、平台导入链接、结果复制和 Surge 本地写入。
 
-- 管理、搜索、分类 Surge 本地 `.sgmodule` 模块
-- 刷新模块列表、单个或批量更新远程模块
-- 添加远程模块、本地文件和剪贴板内容
-- 模块重命名、编辑、移动、删除、备份、回滚和健康检查
-- 支持递归子目录、分类持久化、最近导入记录
-- 可选 Surge HTTP 远程控制和快捷指令更新
+Script-Hub 页的目标平台会同步目标格式、扩展名和快速操作：
 
-### Script-Hub
+| 平台 | 快速导入/写入 | 目标范围 |
+| --- | --- | --- |
+| Quantumult X | `quantumult-x:///add-resource` | QX 重写或规则集远程资源 |
+| Loon | `loon://import` | `.plugin` 或规则集 |
+| Surge | `surge:///install-module`，或写入已授权目录 | `.sgmodule` 模块 |
+| Egern | `egern:/` | Surge 兼容模块或规则集 |
+| Scripting（模块导入） | `scripting://import_module` | `.sgmodule`（Surge）或 `.plugin`（Loon） |
 
-- 使用上游 Script-Hub 测试版作为转换核心
-- 输入插件/模块 HTTPS 直链，或直接粘贴本地文本内容，自动识别常见格式
-- 支持 QX 重写（包括常见 `.snippet`）、Surge 模块、Loon 插件、规则集、QX 脚本（`.js`）和纯文本源格式
-- 支持 Surge、Egern、Stash、Shadowrocket、Loon 等目标格式
-- 脚本源默认按 Script-Hub 逻辑转换为 Surge / Egern 模块；需要保留独立执行语义时可选择 Surge 脚本（兼容）
-- 可设置模块名、文件名、描述、分类、来源 User-Agent、请求头、元数据和 jq 兼容选项
-- 输出设置默认将模块归入“插件”；来源文本包含 `#!category=` 且未手动指定分类时，会优先沿用来源自带分类
-- 高级参数覆盖重写/规则筛选、脚本兼容、定时任务、脚本参数和运行选项
-- 支持预览、复制转换链接，以及 Surge、Egern、Scriptable、Scripting 等导入入口
-- 把 Surge 模块目标直接写入已授权的 Surge 目录
-- 写入成功后自动刷新 Scripting版模块列表
-- 从快捷指令或系统分享进入时，会直接打开 Script-Hub 页面并自动填入、识别来源；页面首次打开也会识别剪贴板中的链接或模块文本
+Scripting 在这里是原生模块导入入口，不是另一套代理配置格式；选择 Scripting 后，输出格式决定导入 Surge 模块还是 Loon 插件。Scriptable 仅作为兼容导入入口保留，不参与转换核心。来源和目标无法表达等价语义时，页面会提示并提供复制结果，不会伪装成可直接导入。
 
 应用不内置在线模块市场、不维护第三方站点列表，也不会自动扫描或分发第三方内容。单个插件或模块使用 HTTPS 直链即可。
 
@@ -48,7 +39,8 @@ https://github.com/ranzhigg/Scripting-Scripts
 - Surge 已开启 iCloud，并能看到本地模块书签目录
 - 首次运行后，在“设置”中选择 Surge 使用的模块目录
 - Script-Hub 转换需要启用 Script-Hub 测试版对应模块和重写
-- Script-Hub 的 Scripting 导入功能需要填写 Scripting 中显示的脚本名称；如果重命名脚本，必须同步修改 Script-Hub 导入设置
+- Scripting 原生“模块导入”不需要脚本名；选择 Scripting 平台后会通过 `scripting://import_module?url=...` 拉起模块导入页
+- “更多”中的旧版 Scripting 脚本桥接仍需要填写 Scripting 中显示的脚本名；如果重命名脚本，必须同步修改该桥接设置
 - 转换按钮会按你的选择把远程来源或本地文本、请求头和高级参数发送到 Script-Hub 测试版；不要填写 Cookie、Token 等敏感凭据
 
 脚本不需要 Scripting Pro API、Mac Surge、Node.js 或 Scriptable。普通版 Scripting 即可运行。
@@ -66,12 +58,13 @@ https://github.com/ranzhigg/Scripting-Scripts
 2. 需要手动转换时，打开本脚本的“Script-Hub”页面，粘贴插件/模块 HTTPS 直链，或切换到“本地文本内容”粘贴文本。
 3. 点击“识别来源格式”，必要时在“格式”中手动修正。
 4. 按需展开“高级转换参数”配置请求头、筛选、脚本兼容和运行参数。
-5. 目标为“Surge / Egern 模块”时，点击“转换并写入”，文件会写入 Scripting 设置的 Surge 目录；也可以在结果页选择客户端导入。
-6. 其他目标格式点击“打开目标客户端导入链接”，或复制转换链接交给对应客户端。
+5. 先在“格式与目标”中选择目标平台；目标格式和快速操作会自动同步。
+6. 目标为 Surge 模块时，点击“转换并写入”会写入 Scripting 设置的 Surge 目录；也可以在结果页生成远程安装链接。
+7. QX、Loon、Egern、Scripting 的可用目标会生成对应 URL Scheme；Scripting 可在 Surge 模块与 Loon 插件之间切换。不支持直接拉起的组合请复制转换结果交给客户端。
 
 不要打开转换链接后复制浏览器地址栏内容。浏览器地址栏中的链接可能未正确编码，复制后会导致参数异常。
 
-如果从 Script-Hub 页面直接点击“导入 Surge（本地模块，需配合 Scripting）”，脚本会通过 URL Scheme 和 Intent 接收转换结果，并写入已授权目录。脚本名必须与 Script-Hub 导入设置完全一致。
+如果使用“转换并写入 Surge”，脚本会通过 Intent 接收转换结果，并写入已授权目录；这条路径不依赖脚本名。只有“更多”中的旧版脚本桥接才要求脚本名与 Scripting 中显示的名称完全一致。
 
 ## 管理模块
 
@@ -101,9 +94,9 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 在项目标题 → Intent 设置中启用 `File URLs`，然后重新导入或刷新脚本。
 
-### 打开 Scripting 但没有导入模块
+### 打开客户端但没有导入模块
 
-检查脚本名、Script-Hub 模块和重写是否启用，以及 Scripting 设置中的 Surge iCloud 书签目录是否仍有权限。不要复制未编码的浏览器地址栏链接。
+先确认目标格式与平台一致：Scripting 原生入口只能接收 `.sgmodule` 或 `.plugin`；Surge 本地写入还需要已授权的 iCloud 模块目录。不要复制未编码的浏览器地址栏链接。若使用“更多”中的旧版 Scripting 脚本桥接，再检查脚本名、Script-Hub 模块和重写是否启用。
 
 ### 转换失败或识别不准
 
@@ -115,6 +108,6 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 ## 社区贡献
 
-本仓库只维护 Scripting 端的通用兼容层和 UI。欢迎提交 Script-Hub 格式兼容、Scripting API 适配、性能优化和文档改进 PR；请不要把单一第三方站点、账号信息、Cookie、Token 或私有地址写入默认代码。
+本仓库只维护 Scripting 端的通用兼容层和 UI。欢迎提交 Script-Hub 格式兼容、平台 URL Scheme 适配、Scripting API 适配、性能优化和文档改进 PR；请不要把单一第三方站点、账号信息、Cookie、Token 或私有地址写入默认代码。
 
 当前版本见 [`script.json`](script.json)。

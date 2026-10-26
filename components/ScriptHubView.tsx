@@ -48,6 +48,22 @@ import { recordRecentImport } from "../utils/recent_imports"
 
 type InputMode = "remote-url" | "local-text"
 
+type ScriptHubPlatform = "quantumult-x" | "loon" | "surge" | "egern" | "scripting"
+
+type ScriptHubPlatformOption = {
+  value: ScriptHubPlatform
+  label: string
+  summary: string
+}
+
+const SCRIPT_HUB_PLATFORMS: ScriptHubPlatformOption[] = [
+  { value: "quantumult-x", label: "Quantumult X", summary: "QX 重写/规则集远程资源" },
+  { value: "loon", label: "Loon", summary: "Loon 插件/规则集" },
+  { value: "surge", label: "Surge", summary: "Surge 模块/规则集，可写入本地目录" },
+  { value: "egern", label: "Egern", summary: "Egern 模块/规则集，兼容 Surge 格式" },
+  { value: "scripting", label: "Scripting（模块导入）", summary: "Scripting 原生模块导入，支持 Surge .sgmodule / Loon .plugin" },
+]
+
 export type ScriptHubInitialInput = {
   sourceURL?: string
   localText?: string
@@ -163,6 +179,7 @@ const DEFAULT_ADVANCED: ScriptHubAdvancedValues = {
 }
 
 const SCRIPT_NAME_KEY = "script-hub-scripting-script-name"
+const PLATFORM_KEY = "script-hub-target-platform"
 
 function loadStoredScriptName(): string {
   try {
@@ -179,6 +196,26 @@ function saveStoredScriptName(value: string): void {
     const name = String(value ?? "").trim()
     if (typeof storage?.set === "function") storage.set(SCRIPT_NAME_KEY, name)
     else storage?.setString?.(SCRIPT_NAME_KEY, name)
+  } catch {}
+}
+
+function loadStoredPlatform(): ScriptHubPlatform {
+  try {
+    const storage: any = (globalThis as any).Storage
+    const value = String(storage?.get?.(PLATFORM_KEY) ?? storage?.getString?.(PLATFORM_KEY) ?? "").trim()
+    return SCRIPT_HUB_PLATFORMS.some((item) => item.value === value)
+      ? value as ScriptHubPlatform
+      : "surge"
+  } catch {
+    return "surge"
+  }
+}
+
+function saveStoredPlatform(value: ScriptHubPlatform): void {
+  try {
+    const storage: any = (globalThis as any).Storage
+    if (typeof storage?.set === "function") storage.set(PLATFORM_KEY, value)
+    else storage?.setString?.(PLATFORM_KEY, value)
   } catch {}
 }
 
@@ -266,13 +303,44 @@ async function copyText(value: string, successMessage: string): Promise<void> {
   }
 }
 
-function clientImportURL(target: ScriptHubTargetFormat, result: string, filename: string): string {
+function clientImportURL(
+  platform: ScriptHubPlatform,
+  sourceFormat: ScriptHubSourceFormat,
+  target: ScriptHubTargetFormat,
+  result: string,
+  filename: string,
+): string {
   const encodedResult = encodeURIComponent(result)
   const encodedName = encodeURIComponent(filename)
-  if (target === "shadowrocket-module") return `https://api.boxjs.app/shadowrocket/install?module=${encodedResult}`
-  if (target === "loon-plugin") return `https://www.nsloon.com/openloon/import?plugin=${encodedResult}`
-  if (target === "stash-stoverride") return `stash://install-override?url=${encodedResult}`
-  if (target === "surge-module") return `surge:///install-module?url=${encodedResult}&name=${encodedName}`
+  if (platform === "quantumult-x" && target === "plain-text") {
+    const resourceKey = sourceFormat === "rule-set" ? "filter_remote" : "rewrite_remote"
+    const resource = JSON.stringify({ [resourceKey]: [result] })
+    return "quantumult-x:///add-resource?remote-resource=" + encodeURIComponent(resource)
+  }
+  if (platform === "loon" && target === "loon-plugin") {
+    return "loon://import?plugin=" + encodedResult
+  }
+  if (platform === "loon" && target === "loon-rule-set") {
+    return "loon://import?rules=" + encodedResult
+  }
+  if (platform === "egern" && (target === "surge-rule-set" || target.includes("domain-set"))) {
+    return "egern:/rules/new?type=rule_set&match=" + encodedResult
+  }
+  if (platform === "egern" && target === "surge-module") {
+    return "egern:/modules/new?name=" + encodedName + "&url=" + encodedResult
+  }
+  if (platform === "scripting" && (target === "surge-module" || target === "loon-plugin")) {
+    return "scripting://import_module?url=" + encodedResult
+  }
+  if (platform === "surge" && target === "surge-module") {
+    return "surge:///install-module?url=" + encodedResult + "&name=" + encodedName
+  }
+  if (target === "shadowrocket-module") {
+    return "https://api.boxjs.app/shadowrocket/install?module=" + encodedResult
+  }
+  if (target === "stash-stoverride") {
+    return "stash://install-override?url=" + encodedResult
+  }
   if (target === "plain-text") return result
   return ""
 }
@@ -319,6 +387,99 @@ function compatibleTargets(sourceFormat: ScriptHubSourceFormat): typeof SCRIPT_H
   ))
 }
 
+function platformTargets(
+  sourceFormat: ScriptHubSourceFormat,
+  platform: ScriptHubPlatform,
+): typeof SCRIPT_HUB_TARGET_FORMATS {
+  const base = compatibleTargets(sourceFormat)
+  if (platform === "quantumult-x") {
+    const plainText = SCRIPT_HUB_TARGET_FORMATS.find((item) => item.value === "plain-text")
+    return plainText ? [plainText] : base
+  }
+
+  const values = platform === "loon"
+    ? new Set<ScriptHubTargetFormat>(["loon-plugin", "loon-rule-set", "plain-text"])
+    : platform === "egern"
+      ? new Set<ScriptHubTargetFormat>(["surge-module", "surge-rule-set", "surge-domain-set", "surge-domain-set2", "plain-text"])
+      : platform === "scripting"
+        ? new Set<ScriptHubTargetFormat>(["surge-module", "loon-plugin"])
+      : new Set<ScriptHubTargetFormat>([
+        "surge-module",
+        "surge-script",
+        "surge-rule-set",
+        "surge-domain-set",
+        "surge-domain-set2",
+        "plain-text",
+      ])
+  const filtered = base.filter((item) => values.has(item.value))
+  if (filtered.length > 0) return filtered
+
+  const plainText = SCRIPT_HUB_TARGET_FORMATS.find((item) => item.value === "plain-text")
+  return plainText ? [plainText] : base
+}
+
+function defaultPlatformTarget(
+  sourceFormat: ScriptHubSourceFormat,
+  platform: ScriptHubPlatform,
+): ScriptHubTargetFormat {
+  const options = platformTargets(sourceFormat, platform)
+  const preferred = platform === "quantumult-x"
+    ? "plain-text"
+    : platform === "loon"
+      ? sourceFormat === "rule-set" ? "loon-rule-set" : "loon-plugin"
+      : platform === "egern"
+        ? sourceFormat === "rule-set" ? "surge-rule-set" : "surge-module"
+        : platform === "scripting"
+          ? sourceFormat === "loon-plugin" ? "loon-plugin" : "surge-module"
+        : sourceFormat === "rule-set" ? "surge-rule-set" : "surge-module"
+  return options.find((item) => item.value === preferred)?.value
+    ?? options[0]?.value
+    ?? "surge-module"
+}
+
+function targetLabelForPlatform(
+  platform: ScriptHubPlatform,
+  sourceFormat: ScriptHubSourceFormat,
+  targetFormat: ScriptHubTargetFormat,
+): string {
+  if (platform === "quantumult-x" && targetFormat === "plain-text") {
+    return sourceFormat === "rule-set" ? "QX 规则集（直链）" : "QX 重写（直链）"
+  }
+  if (platform === "loon" && targetFormat === "loon-plugin") return "Loon 插件"
+  if (platform === "loon" && targetFormat === "loon-rule-set") return "Loon 规则集"
+  if (platform === "surge" && targetFormat === "surge-module") return "Surge 模块"
+  if (platform === "egern" && targetFormat === "surge-module") return "Egern 模块"
+  if (platform === "egern" && (targetFormat === "surge-rule-set" || targetFormat.includes("domain-set"))) return "Egern 规则集"
+  if (platform === "scripting" && targetFormat === "surge-module") return "Scripting · Surge 模块"
+  if (platform === "scripting" && targetFormat === "loon-plugin") return "Scripting · Loon 插件"
+  return scriptHubTargetFormatLabel(targetFormat)
+}
+
+function platformCanQuickImport(
+  platform: ScriptHubPlatform,
+  sourceFormat: ScriptHubSourceFormat,
+  targetFormat: ScriptHubTargetFormat,
+): boolean {
+  if (!isScriptHubSourceTargetCompatible(sourceFormat, targetFormat)) return false
+  if (platform === "quantumult-x") {
+    return targetFormat === "plain-text" && (sourceFormat === "qx-rewrite" || sourceFormat === "rule-set" || sourceFormat === "plain-text")
+  }
+  if (platform === "loon") return targetFormat === "loon-plugin" || targetFormat === "loon-rule-set"
+  if (platform === "egern") {
+    return targetFormat === "surge-module"
+      || targetFormat === "surge-rule-set"
+      || targetFormat.includes("domain-set")
+  }
+  if (platform === "scripting") return targetFormat === "surge-module" || targetFormat === "loon-plugin"
+  return targetFormat === "surge-module"
+}
+
+function platformForTarget(targetFormat: ScriptHubTargetFormat): ScriptHubPlatform {
+  if (targetFormat === "loon-plugin" || targetFormat === "loon-rule-set") return "loon"
+  if (targetFormat === "plain-text") return "quantumult-x"
+  return "surge"
+}
+
 export function ScriptHubView(props: { onImported?: () => void; tag?: number; tabItem?: any; initialInput?: ScriptHubInitialInput }) {
   const [cfg, setCfg] = useState<AppConfig>(() => loadConfig())
   const [inputMode, setInputMode] = useState<InputMode>("remote-url")
@@ -326,6 +487,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const [localText, setLocalText] = useState("")
   const [sourceFormat, setSourceFormat] = useState<ScriptHubSourceFormat>("qx-rewrite")
   const [sourceFormatAuto, setSourceFormatAuto] = useState(true)
+  const [platform, setPlatform] = useState<ScriptHubPlatform>(loadStoredPlatform)
   const [targetFormat, setTargetFormat] = useState<ScriptHubTargetFormat>("surge-module")
   const [moduleName, setModuleName] = useState("")
   const [categoryIdx, setCategoryIdx] = useState(0)
@@ -366,10 +528,24 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const selectedCategory = categoryCustomized
     ? customCategory.trim() || menuCategory
     : nativeCategory || customCategory.trim() || menuCategory
-  const targetOptions = useMemo(() => compatibleTargets(sourceFormat), [sourceFormat])
+  const selectedPlatform = SCRIPT_HUB_PLATFORMS.find((item) => item.value === platform) ?? SCRIPT_HUB_PLATFORMS[2]!
+  const targetOptions = useMemo(() => platformTargets(sourceFormat, platform), [sourceFormat, platform])
   const targetIndex = Math.max(0, targetOptions.findIndex((item) => item.value === targetFormat))
-  const targetCanWriteToSurge = targetFormat === "surge-module"
-  const hasSource = inputMode === "local-text" ? !!localText.trim() : !!sourceURL.trim()
+  const targetCanWriteToSurge = platform === "surge" && targetFormat === "surge-module"
+  const targetCanQuickImport = platformCanQuickImport(platform, sourceFormat, targetFormat)
+  const primaryActionTitle = busy
+    ? "处理中…"
+    : targetCanWriteToSurge
+      ? "转换并写入 Surge"
+      : targetCanQuickImport
+        ? "转换并导入 " + selectedPlatform.label
+        : "复制 " + selectedPlatform.label + " 结果"
+  const primaryActionImage = targetCanWriteToSurge
+    ? "arrow.down.doc.fill"
+    : targetCanQuickImport
+      ? "arrow.up.forward.app"
+      : "doc.on.clipboard"
+ const hasSource = inputMode === "local-text" ? !!localText.trim() : !!sourceURL.trim()
   const sourceForConversion = inputMode === "local-text" ? "http://local.text" : sourceURL.trim()
   const localModuleName = inputMode === "local-text"
     ? sourceNameFromText(localText)
@@ -379,9 +555,13 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     .replace(/[\\/]/g, "-")
     .trim() || "转换模块"
 
+ useEffect(() => {
+   saveStoredScriptName(scriptingScriptName)
+ }, [scriptingScriptName])
+
   useEffect(() => {
-    saveStoredScriptName(scriptingScriptName)
-  }, [scriptingScriptName])
+    saveStoredPlatform(platform)
+  }, [platform])
 
   function updateAdvanced<K extends keyof ScriptHubAdvancedValues>(key: K, value: ScriptHubAdvancedValues[K]) {
     setAdvanced((previous) => ({ ...previous, [key]: value }))
@@ -468,9 +648,9 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const conversionResult = useMemo(() => {
     if (!hasSource) return { url: "", error: "" }
     try {
-      if (!isScriptHubSourceTargetCompatible(sourceFormat, targetFormat)) {
-        throw new Error("QX 专属脚本仅支持转换为 Surge / Egern 模块或 Surge 脚本（兼容）")
-      }
+     if (!isScriptHubSourceTargetCompatible(sourceFormat, targetFormat)) {
+        throw new Error("当前来源不支持转换为 " + targetLabelForPlatform(platform, sourceFormat, targetFormat))
+     }
       const name = moduleName.trim() || localModuleName
       return {
         url: buildScriptHubConversionURL({
@@ -498,9 +678,10 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     sourceURL,
     localText,
     sourceForConversion,
-    sourceFormat,
-    targetFormat,
-    moduleName,
+   sourceFormat,
+   targetFormat,
+    platform,
+   moduleName,
     localModuleName,
     selectedCategory,
     sourceUserAgent,
@@ -511,15 +692,14 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
 
   function setDetectedFormat(nextSource: ScriptHubSourceFormat, reason: string, suggested?: ScriptHubTargetFormat) {
     setSourceFormat(nextSource)
-    setSourceFormatAuto(true)
-    setDetectedReason(reason)
-    const nextTarget = suggestedScriptHubTargetFormat(nextSource, suggested ?? targetFormat)
-    const nextTargets = compatibleTargets(nextSource)
-    if (!nextTargets.some((item) => item.value === nextTarget)) {
-      setTargetFormat(nextTargets[0]?.value ?? "surge-module")
-    } else {
-      setTargetFormat(nextTarget)
-    }
+   setSourceFormatAuto(true)
+   setDetectedReason(reason)
+    const suggestedTarget = suggestedScriptHubTargetFormat(nextSource, suggested ?? targetFormat)
+    const nextTargets = platformTargets(nextSource, platform)
+    const nextTarget = nextTargets.find((item) => item.value === suggestedTarget)?.value
+      ?? nextTargets.find((item) => item.value === targetFormat)?.value
+      ?? defaultPlatformTarget(nextSource, platform)
+    setTargetFormat(nextTarget)
   }
 
   async function detectFormat() {
@@ -661,10 +841,13 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       if (provided?.category?.trim()) setCustomCategory(provided.category.trim())
       if (provided?.sourceUserAgent !== undefined) setSourceUserAgent(provided.sourceUserAgent)
       if (provided?.removeSourceMetadata !== undefined) setRemoveSourceMetadata(provided.removeSourceMetadata)
-      if (provided?.enableJQ !== undefined) setEnableJQ(provided.enableJQ)
-      if (provided?.sourceFormat) setSourceFormat(provided.sourceFormat)
-      if (provided?.targetFormat) setTargetFormat(provided.targetFormat)
-      hideKeyboard()
+     if (provided?.enableJQ !== undefined) setEnableJQ(provided.enableJQ)
+     if (provided?.sourceFormat) setSourceFormat(provided.sourceFormat)
+      if (provided?.targetFormat) {
+        setPlatform(platformForTarget(provided.targetFormat))
+        setTargetFormat(provided.targetFormat)
+      }
+     hideKeyboard()
       if (provided?.sourceFormat) {
         setDetectedReason("已使用分享参数指定来源格式")
         setStatus("已填入来源，格式由分享参数指定")
@@ -722,12 +905,12 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   async function openClientImport(client: "surge" | "scripting" | "scriptable" | "egern" | "target") {
     if (!conversionResult.url) return copyConversionURL()
     let url = ""
-    if (client === "surge") url = clientImportURL("surge-module", conversionResult.url, outputFilename)
+    if (client === "surge") url = clientImportURL("surge", sourceFormat, "surge-module", conversionResult.url, outputFilename)
     if (client === "scriptable") {
       url = `scriptable:///run/SurgeModuleTool?url=${encodeURIComponent(conversionResult.url)}&name=${encodeURIComponent(outputFilename)}`
     }
     if (client === "egern") {
-      url = `egern:///modules/new?url=${encodeURIComponent(conversionResult.url)}&name=${encodeURIComponent(outputFilename)}`
+      url = clientImportURL("egern", sourceFormat, "surge-module", conversionResult.url, outputFilename)
     }
     if (client === "scripting") {
       if (!scriptingScriptName.trim()) {
@@ -739,7 +922,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
       }
       url = `scripting://run_single/${encodeURIComponent(scriptingScriptName.trim())}?sh_action=import-surge-module&sh_module_url=${encodeURIComponent(conversionResult.url)}&sh_module_name=${encodeURIComponent(outputFilename)}&sh_module_category=${encodeURIComponent(selectedCategory || "Script Hub")}`
     }
-    if (client === "target") url = clientImportURL(targetFormat, conversionResult.url, outputFilename)
+    if (client === "target") url = clientImportURL(platform, sourceFormat, targetFormat, conversionResult.url, outputFilename)
     if (!url) return copyConversionURL()
     if (!(await openExternalURL(url))) {
       await copyText(url, "无法直接拉起客户端，导入链接已复制")
@@ -749,7 +932,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   async function writeToSurge() {
     if (busy) return
     if (!targetCanWriteToSurge) {
-      await openClientImport("target")
+      if (targetCanQuickImport) await openClientImport("target")
+      else await copyConversionURL()
       return
     }
     if (!conversionResult.url) {
@@ -796,6 +980,12 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     }
   }
 
+  async function performPrimaryAction() {
+    if (targetCanWriteToSurge) return writeToSurge()
+    if (targetCanQuickImport) return openClientImport("target")
+    return copyConversionURL()
+  }
+
   function resetForm() {
     hideKeyboard()
     setInputMode("remote-url")
@@ -804,6 +994,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     setSourceFormat("qx-rewrite")
     setSourceFormatAuto(true)
     setTargetFormat("surge-module")
+    setPlatform("surge")
     setModuleName("")
     setCategoryIdx(0)
     setCustomCategory("")
@@ -916,11 +1107,13 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                   if (!categoryCustomized) setCustomCategory("")
                   if (!moduleName.trim()) setModuleName(deriveModuleNameFromSource(value))
                   if (sourceFormatAuto) {
-                    const detection = detectScriptHubSourceFormat(value)
-                    setSourceFormat(detection.sourceFormat)
-                    const nextTarget = suggestedScriptHubTargetFormat(detection.sourceFormat, targetFormat)
-                    if (compatibleTargets(detection.sourceFormat).some((item) => item.value === nextTarget)) setTargetFormat(nextTarget)
-                  }
+                   const detection = detectScriptHubSourceFormat(value)
+                   setSourceFormat(detection.sourceFormat)
+                   const nextTarget = suggestedScriptHubTargetFormat(detection.sourceFormat, targetFormat)
+                    const nextTargets = platformTargets(detection.sourceFormat, platform)
+                    if (nextTargets.some((item) => item.value === nextTarget)) setTargetFormat(nextTarget)
+                    else setTargetFormat(defaultPlatformTarget(detection.sourceFormat, platform))
+                 }
                 }}
                 prompt="https://raw.githubusercontent.com/..."
                 axis="vertical"
@@ -937,11 +1130,13 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                   if (!categoryCustomized) setCustomCategory("")
                   if (!moduleName.trim()) setModuleName(sourceNameFromText(value))
                   if (sourceFormatAuto) {
-                    const detection = detectScriptHubSourceFormat("local.txt", value)
-                    setSourceFormat(detection.sourceFormat)
-                    const nextTarget = suggestedScriptHubTargetFormat(detection.sourceFormat, targetFormat)
-                    if (compatibleTargets(detection.sourceFormat).some((item) => item.value === nextTarget)) setTargetFormat(nextTarget)
-                  }
+                   const detection = detectScriptHubSourceFormat("local.txt", value)
+                   setSourceFormat(detection.sourceFormat)
+                   const nextTarget = suggestedScriptHubTargetFormat(detection.sourceFormat, targetFormat)
+                    const nextTargets = platformTargets(detection.sourceFormat, platform)
+                    if (nextTargets.some((item) => item.value === nextTarget)) setTargetFormat(nextTarget)
+                    else setTargetFormat(defaultPlatformTarget(detection.sourceFormat, platform))
+                 }
                 }}
                 prompt="粘贴重写、模块、插件或规则集文本"
                 axis="vertical"
@@ -966,21 +1161,38 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               setFormatExpanded(expanded)
             }}
           >
-            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
-              来源格式决定解析方式，目标格式决定最终文件类型。自动识别失败时可以手动修正。
-            </Text>
+           <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              先选择你要使用的代理软件，目标格式和下方快速操作会随平台同步。来源格式决定解析方式，自动识别失败时可以手动修正。
+           </Text>
             <Picker
-              title={sourceFormatAuto ? "来源格式（自动）" : "来源格式（手动）"}
+              title="目标平台"
+              pickerStyle="menu"
+              value={Math.max(0, SCRIPT_HUB_PLATFORMS.findIndex((item) => item.value === platform))}
+              onChanged={(idx: number) => {
+                hideKeyboard()
+                const nextPlatform = SCRIPT_HUB_PLATFORMS[idx]?.value ?? "surge"
+                setPlatform(nextPlatform)
+                setTargetFormat(defaultPlatformTarget(sourceFormat, nextPlatform))
+                setClientExpanded(false)
+              }}
+            >
+              {SCRIPT_HUB_PLATFORMS.map((item, idx) => <Text key={item.value} tag={idx}>{item.label}</Text>)}
+            </Picker>
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              {selectedPlatform.summary + "；平台改变后目标格式、扩展名和快速导入方式会同步更新。"}
+            </Text>
+           <Picker
+             title={sourceFormatAuto ? "来源格式（自动）" : "来源格式（手动）"}
               pickerStyle="menu"
               value={Math.max(0, SCRIPT_HUB_SOURCE_FORMATS.findIndex((item) => item.value === sourceFormat))}
               onChanged={(idx: number) => {
                 const next = SCRIPT_HUB_SOURCE_FORMATS[idx]?.value ?? "qx-rewrite"
-                setSourceFormat(next)
-                setSourceFormatAuto(false)
-                const options = compatibleTargets(next)
-                if (!options.some((item) => item.value === targetFormat)) {
-                  setTargetFormat(options[0]?.value ?? "surge-module")
-                }
+               setSourceFormat(next)
+               setSourceFormatAuto(false)
+                const options = platformTargets(next, platform)
+               if (!options.some((item) => item.value === targetFormat)) {
+                  setTargetFormat(defaultPlatformTarget(next, platform))
+               }
               }}
             >
               {SCRIPT_HUB_SOURCE_FORMATS.map((item, idx) => <Text key={item.value} tag={idx}>{item.label}</Text>)}
@@ -1009,25 +1221,36 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               foregroundStyle={sourceFormat === "qx-script" ? "systemBlue" : "secondaryLabel"}
               lineLimit={3}
             >
-              {sourceFormat === "qx-script"
-                ? "这是脚本源：默认按 Script-Hub 逻辑转换为 Surge / Egern 模块；需要独立执行时再选择 Surge 脚本。"
-                : sourceFormat === "qx-rewrite"
-                  ? "这是 Quantumult X 重写源，通常可直接转换为 Surge / Egern 模块。"
-                  : "目标格式会决定转换结果的扩展名和客户端导入方式。"}
+             {sourceFormat === "qx-script"
+               ? "这是脚本源：默认按 Script-Hub 逻辑转换为 Surge / Egern 模块；需要独立执行时再选择 Surge 脚本。"
+               : sourceFormat === "qx-rewrite"
+                 ? "这是 Quantumult X 重写源，通常可直接转换为 Surge / Egern 模块。"
+                  : "目标平台决定默认输出格式；目标格式可在当前平台支持范围内手动调整。"}
+           </Text>
+           <Picker
+              title="输出格式"
+             pickerStyle="menu"
+             value={targetIndex}
+             onChanged={(idx: number) => {
+               const next = targetOptions[idx]?.value ?? "surge-module"
+               setTargetFormat(next)
+             }}
+           >
+              {targetOptions.map((item, idx) => <Text key={item.value} tag={idx}>{targetLabelForPlatform(platform, sourceFormat, item.value)}</Text>)}
+           </Picker>
+            <Text font="caption" foregroundStyle={targetCanQuickImport || targetCanWriteToSurge ? "secondaryLabel" : "systemOrange"} lineLimit={4}>
+              {platform === "quantumult-x"
+                ? "QX 使用 add-resource 远程资源链接；仅 QX 重写、规则集或纯文本来源提供直接导入。"
+                : platform === "loon"
+                  ? "Loon 使用 loon://import 导入插件或规则集；不支持的来源会退回复制转换结果。"
+                  : platform === "egern"
+                    ? "Egern 使用 egern:/ Scheme 导入 Surge 兼容模块或规则集。"
+                    : platform === "scripting"
+                      ? "Scripting 原生模块导入支持 .sgmodule 和 .plugin；输出格式决定导入 Surge 还是 Loon。"
+                    : "Surge 模块可写入已授权目录，也可生成 surge:///install-module 远程安装链接。"}
             </Text>
-            <Picker
-              title="目标格式"
-              pickerStyle="menu"
-              value={targetIndex}
-              onChanged={(idx: number) => {
-                const next = targetOptions[idx]?.value ?? "surge-module"
-                setTargetFormat(next)
-              }}
-            >
-              {targetOptions.map((item, idx) => <Text key={item.value} tag={idx}>{item.label}</Text>)}
-            </Picker>
-            <HStack>
-              <Text>转换核心</Text>
+           <HStack>
+             <Text>转换核心</Text>
               <Spacer />
               <Text foregroundStyle="secondaryLabel">Script-Hub 测试版</Text>
             </HStack>
@@ -1143,17 +1366,17 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 <Text font="headline">{hasSource ? "已准备好转换" : "等待来源内容"}</Text>
                 <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
                   {hasSource
-                    ? `${scriptHubSourceFormatLabel(sourceFormat)} → ${scriptHubTargetFormatLabel(targetFormat)} · ${outputFilename}`
-                    : "先填写来源链接或粘贴本地文本，再选择目标格式"}
+                    ? `${scriptHubSourceFormatLabel(sourceFormat)} → ${targetLabelForPlatform(platform, sourceFormat, targetFormat)} · ${outputFilename}`
+                    : "先填写来源链接或粘贴本地文本，再选择目标平台"}
                 </Text>
               </VStack>
             </HStack>
             <ActionButton
-              title={busy ? "处理中…" : targetCanWriteToSurge ? "转换并写入 Surge" : "生成目标导入链接"}
-              systemImage={targetCanWriteToSurge ? "arrow.down.doc.fill" : "arrow.up.forward.app"}
+              title={primaryActionTitle}
+              systemImage={primaryActionImage}
               tint="systemGreen"
               disabled={busy || !conversionResult.url}
-              onPress={writeToSurge}
+              onPress={performPrimaryAction}
             />
             {!conversionResult.url && hasSource ? (
               <Text font="caption" foregroundStyle="systemOrange" lineLimit={3}>
@@ -1279,8 +1502,8 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 {conversionResult.url ? "转换链接已根据当前选项实时生成" : "填写来源后会在这里生成转换链接"}
               </Text>
               <Spacer />
-              <Text font="caption2" foregroundStyle={targetCanWriteToSurge ? "systemGreen" : "systemBlue"}>
-                {targetCanWriteToSurge ? "可写入" : "可导入"}
+              <Text font="caption2" foregroundStyle={targetCanWriteToSurge ? "systemGreen" : targetCanQuickImport ? "systemBlue" : "systemOrange"}>
+                {targetCanWriteToSurge ? "可写入" : targetCanQuickImport ? "可导入" : "需复制"}
               </Text>
             </HStack>
             <VStack
@@ -1322,15 +1545,15 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 onPress={copyConversionURL}
               />
               <ActionButton
-                title={targetCanWriteToSurge ? "再次写入" : "复制目标"}
-                systemImage={targetCanWriteToSurge ? "arrow.down.doc.fill" : "doc.on.clipboard"}
+                title={targetCanWriteToSurge ? "再次写入" : targetCanQuickImport ? "导入目标" : "复制目标"}
+                systemImage={targetCanWriteToSurge ? "arrow.down.doc.fill" : targetCanQuickImport ? "arrow.up.forward.app" : "doc.on.clipboard"}
                 tint="systemGreen"
                 disabled={busy || !conversionResult.url}
-                onPress={writeToSurge}
+                onPress={performPrimaryAction}
               />
             </HStack>
             <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
-              {scriptHubSourceFormatLabel(sourceFormat)} → {scriptHubTargetFormatLabel(targetFormat)}
+              {scriptHubSourceFormatLabel(sourceFormat)} → {targetLabelForPlatform(platform, sourceFormat, targetFormat)}
             </Text>
             {busy ? <ProgressView progressViewStyle="circular" /> : null}
             {status ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>{status}</Text> : null}
@@ -1346,8 +1569,16 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               tint="systemBlue"
               frame={{ maxWidth: "infinity", minHeight: 40 }}
             >
-              <Button title="导入 Surge（远程模块）" systemImage="arrow.down.circle" action={() => { void openClientImport("surge") }} />
-              <Button title="导入 Egern" systemImage="arrow.down.circle" action={() => { void openClientImport("egern") }} />
+              <Button
+                title={targetCanQuickImport ? "导入 " + selectedPlatform.label : "复制 " + selectedPlatform.label + " 结果"}
+                systemImage={targetCanQuickImport ? "arrow.down.circle" : "doc.on.clipboard"}
+                action={() => { void performPrimaryAction() }}
+              />
+              {targetFormat === "surge-module" ? <>
+                <Button title="导入 Surge（远程模块）" systemImage="arrow.down.circle" action={() => { void openClientImport("surge") }} />
+                <Button title="导入 Egern 模块" systemImage="arrow.down.circle" action={() => { void openClientImport("egern") }} />
+              </> : null}
+              <Button title="导入 Quantumult X / Loon" systemImage="arrow.down.circle" disabled={!targetCanQuickImport || (platform !== "quantumult-x" && platform !== "loon")} action={() => { void openClientImport("target") }} />
               <Button title="导入 Scriptable" systemImage="square.and.arrow.down" action={() => { void openClientImport("scriptable") }} />
               <Button title="导入 Scripting（本地模块）" systemImage="square.and.arrow.down" disabled={!scriptingScriptName.trim()} action={() => { void openClientImport("scripting") }} />
               <Button title="复制原始来源" systemImage="doc.on.clipboard" action={() => { void copySource() }} />
@@ -1355,7 +1586,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             </Menu>
           </Section>
 
-          {conversionResult.url && targetFormat === "surge-module" ? (
+          {conversionResult.url && targetFormat === "surge-module" && platform !== "scripting" ? (
             <DisclosureGroup
               title="客户端导入设置"
               isExpanded={clientExpanded}
@@ -1365,7 +1596,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               }}
             >
               <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
-                这里的按钮只负责拉起对应客户端；转换结果仍由 Script-Hub 测试版提供。Scripting 导入需要脚本名与脚本设置保持一致。
+                这里的按钮只负责拉起对应客户端；转换结果仍由 Script-Hub 测试版提供。Scripting 原生“模块导入”不需要脚本名；下面的设置仅用于旧版脚本桥接。
               </Text>
               <TextField label={<Text>Scripting 脚本名</Text>} value={scriptingScriptName} onChanged={setScriptingScriptName} prompt="填写 Scripting 中显示的脚本名" />
               <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
@@ -1376,9 +1607,28 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
 
           {conversionResult.url && targetFormat !== "surge-module" ? (
             <Section header={<Text>目标客户端</Text>}>
-              <ActionButton title={`打开 ${scriptHubTargetFormatLabel(targetFormat)} 导入链接`} systemImage="arrow.up.forward.app" tint="systemBlue" onPress={() => openClientImport("target")} />
+              <ActionButton
+                title={targetCanQuickImport ? "打开 " + targetLabelForPlatform(platform, sourceFormat, targetFormat) + " 导入链接" : "复制目标结果"}
+                systemImage={targetCanQuickImport ? "arrow.up.forward.app" : "doc.on.clipboard"}
+                tint="systemBlue"
+                onPress={() => performPrimaryAction()}
+              />
+              {!targetCanQuickImport ? (
+                <Text font="caption" foregroundStyle="systemOrange" lineLimit={3}>
+                  当前来源与目标平台没有直接导入方式，请更换来源/目标格式或复制转换链接后手动导入。
+                </Text>
+              ) : null}
             </Section>
           ) : null}
+          <Text
+            font="caption"
+            foregroundStyle="secondaryLabel"
+            multilineTextAlignment="center"
+            frame={{ maxWidth: "infinity" }}
+            padding={{ top: 8, bottom: 12 }}
+          >
+            当前平台：{selectedPlatform.label}
+          </Text>
         </Form>
       </VStack>
     </NavigationStack>
