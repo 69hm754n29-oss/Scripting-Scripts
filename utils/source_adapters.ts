@@ -1,15 +1,28 @@
 import { normalizeSourceURL } from "./source_fetcher"
+import {
+  SCRIPT_HUB_SOURCE_FORMATS,
+  SCRIPT_HUB_TARGET_FORMATS,
+  type ScriptHubSourceFormat,
+  type ScriptHubTargetFormat,
+} from "./script_hub_adapter"
 
-export type SourceAdapterKind = "loon-plugin"
+export type SourceMode = "direct" | "marketplace"
+export type SourceAdapterKind = ScriptHubSourceFormat
 
 export type SourceConfig = {
   id: string
   name: string
+  mode: SourceMode
+  /** Direct module URL, or the last selected module in a marketplace. */
   sourceURL: string
+  /** User-supplied marketplace repository; never bundled by the app. */
+  repositoryURL?: string
+  repositoryBranch?: string
+  repositoryPath?: string
   moduleName?: string
   sourceUserAgent?: string
   sourceKind: SourceAdapterKind
-  target: "surge-module"
+  target: ScriptHubTargetFormat
   converter: "script-hub-beta"
   enabled: boolean
   defaultCategory?: string
@@ -26,6 +39,8 @@ export type SourceImportRequest = {
   moduleName: string
   sourceURL: string
   convertedURL: string
+  sourceFormat: ScriptHubSourceFormat
+  targetFormat: ScriptHubTargetFormat
   category?: string
   saveDir?: string
   keepOriginalLink: boolean
@@ -46,15 +61,37 @@ function cleanOneLine(value: unknown, maxLength: number): string {
     .slice(0, maxLength)
 }
 
+function validSourceFormat(value: unknown): ScriptHubSourceFormat {
+  const candidate = String(value ?? "") as ScriptHubSourceFormat
+  return SCRIPT_HUB_SOURCE_FORMATS.some((item) => item.value === candidate) ? candidate : "loon-plugin"
+}
+
+function validTargetFormat(value: unknown): ScriptHubTargetFormat {
+  const candidate = String(value ?? "") as ScriptHubTargetFormat
+  return SCRIPT_HUB_TARGET_FORMATS.some((item) => item.value === candidate) ? candidate : "surge-module"
+}
+
 function normalize(value: unknown, index: number): SourceConfig | null {
   if (!value || typeof value !== "object") return null
   const item = value as any
-  let sourceURL = ""
-  try {
-    sourceURL = normalizeSourceURL(item.sourceURL)
-  } catch {
-    return null
+  const mode: SourceMode = item.mode === "marketplace" ? "marketplace" : "direct"
+  let repositoryURL = ""
+  if (mode === "marketplace") {
+    try {
+      repositoryURL = normalizeSourceURL(item.repositoryURL || item.sourceURL)
+    } catch {
+      return null
+    }
   }
+  let sourceURL = ""
+  if (String(item.sourceURL ?? "").trim()) {
+    try {
+      sourceURL = normalizeSourceURL(item.sourceURL)
+    } catch {
+      if (mode === "direct") return null
+    }
+  }
+  if (!sourceURL) sourceURL = repositoryURL
   const name = cleanOneLine(item.name, 80)
   if (!sourceURL || !name) return null
   const id = cleanOneLine(item.id, 120) || `source-${Date.now()}-${index}`
@@ -62,11 +99,15 @@ function normalize(value: unknown, index: number): SourceConfig | null {
   return {
     id,
     name,
+    mode,
     sourceURL,
+    repositoryURL: repositoryURL || undefined,
+    repositoryBranch: cleanOneLine(item.repositoryBranch, 200) || undefined,
+    repositoryPath: cleanOneLine(item.repositoryPath, 512) || undefined,
     moduleName: cleanOneLine(item.moduleName, 128) || undefined,
     sourceUserAgent: cleanOneLine(item.sourceUserAgent, 256) || undefined,
-    sourceKind: "loon-plugin",
-    target: "surge-module",
+    sourceKind: validSourceFormat(item.sourceKind),
+    target: validTargetFormat(item.target),
     converter: "script-hub-beta",
     enabled: item.enabled !== false,
     defaultCategory: cleanOneLine(item.defaultCategory, 64) || undefined,
@@ -113,13 +154,24 @@ export function loadSourceConfigs(): SourceConfig[] {
 }
 
 export function saveSourceConfig(source: SourceConfig): SourceConfig {
+  const mode: SourceMode = source.mode === "marketplace" ? "marketplace" : "direct"
+  const repositoryURL = mode === "marketplace"
+    ? normalizeSourceURL(source.repositoryURL || source.sourceURL)
+    : undefined
   const fixed: SourceConfig = {
     ...source,
+    mode,
     name: cleanOneLine(source.name, 80),
     sourceURL: normalizeSourceURL(source.sourceURL),
+    repositoryURL,
+    repositoryBranch: cleanOneLine(source.repositoryBranch, 200) || undefined,
+    repositoryPath: cleanOneLine(source.repositoryPath, 512) || undefined,
+    sourceKind: validSourceFormat(source.sourceKind),
+    target: validTargetFormat(source.target),
     updatedAt: Date.now(),
   }
-  if (!fixed.name || !fixed.sourceURL) throw new Error("来源名称和直链不能为空")
+  if (!fixed.name || !fixed.sourceURL) throw new Error("来源名称和地址不能为空")
+  if (mode === "marketplace" && !fixed.repositoryURL) throw new Error("市场仓库地址不能为空")
   const next = loadSourceConfigs().filter((item) => item.id !== fixed.id)
   write([fixed, ...next])
   return fixed
@@ -128,8 +180,14 @@ export function saveSourceConfig(source: SourceConfig): SourceConfig {
 export function createSourceConfig(input: {
   name: string
   sourceURL: string
+  mode?: SourceMode
+  repositoryURL?: string
+  repositoryBranch?: string
+  repositoryPath?: string
   moduleName?: string
   sourceUserAgent?: string
+  sourceKind?: ScriptHubSourceFormat
+  target?: ScriptHubTargetFormat
   defaultCategory?: string
   saveDir?: string
   autoImport?: boolean
@@ -141,10 +199,14 @@ export function createSourceConfig(input: {
     id: `source-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: cleanOneLine(input.name, 80),
     sourceURL: String(input.sourceURL ?? "").trim(),
+    mode: input.mode === "marketplace" ? "marketplace" : "direct",
+    repositoryURL: String(input.repositoryURL ?? "").trim() || undefined,
+    repositoryBranch: cleanOneLine(input.repositoryBranch, 200) || undefined,
+    repositoryPath: cleanOneLine(input.repositoryPath, 512) || undefined,
     moduleName: cleanOneLine(input.moduleName, 128) || undefined,
     sourceUserAgent: cleanOneLine(input.sourceUserAgent, 256) || undefined,
-    sourceKind: "loon-plugin",
-    target: "surge-module",
+    sourceKind: input.sourceKind ?? "loon-plugin",
+    target: input.target ?? "surge-module",
     converter: "script-hub-beta",
     enabled: true,
     defaultCategory: cleanOneLine(input.defaultCategory, 64) || undefined,

@@ -5,7 +5,7 @@
     "autoUpdateInterval": null
   },
   "name": "Surge模块管理",
-  "description": "Surge 模块管理：管理、分类、下载/更新 Surge .sgmodule 模块，支持递归子文件夹、链接格式识别、本地模块、并发更新和 HTTP 远程开关控制。\n\nScript-Hub：点击其 Scripting 导入按钮即可下载为本地模块；接受 HTTPS 来源，并兼容 Script-Hub 的 http://script.hub 本地入口；同名不同来源不会静默覆盖。也支持从 iOS 文件分享已转换的 .sgmodule，直接写入 Surge 书签目录。\n\n自定义来源：用户可保存 HTTPS Loon 插件直链、模块名、分类、目录和可选 User-Agent，再生成转换链接并一键写入。仓库提供统一来源抓取和显式适配器结构，但默认不内置、不扫描任何第三方来源目录；欢迎社区提交各类第三方来源适配 PR。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。\n参数示例：\n1. 不传参数，或传 all / 全部：更新全部远程模块。\n2. 传分类名，例如 广告拦截：只更新该分类。\n3. 传 JSON：{\"category\":\"广告拦截\",\"dir\":\"子文件夹名称\",\"name\":\"模块名称\"}\n4. 传多个模块名：{\"names\":[\"模块1\",\"模块2\"]}\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回“书签路径不可用，请在设置页重新选择书签文件夹”。",
+  "description": "Surge 模块管理：管理、分类、下载/更新 Surge .sgmodule 模块，支持递归子文件夹、链接格式识别、本地模块、并发更新和 HTTP 远程开关控制。\n\nScript-Hub：点击其 Scripting 导入按钮即可下载为本地模块；接受 HTTPS 来源，并兼容 Script-Hub 的 http://script.hub 本地入口；同名不同来源不会静默覆盖。也支持从 iOS 文件分享已转换的 .sgmodule，直接写入 Surge 书签目录。\n\n第三方来源：来源管理区分单个插件/模块直链和用户主动填写的插件/模块市场仓库。市场目录按需加载，不内置站点、不分发内容、不递归扫描；Script-Hub 源格式和模块目标格式可选，只有 Surge 模块目标会写入本地 Surge 目录，其它目标复制转换链接。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。\n参数示例：\n1. 不传参数，或传 all / 全部：更新全部远程模块。\n2. 传分类名，例如 广告拦截：只更新该分类。\n3. 传 JSON：{\"category\":\"广告拦截\",\"dir\":\"子文件夹名称\",\"name\":\"模块名称\"}\n4. 传多个模块名：{\"names\":[\"模块1\",\"模块2\"]}\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回“书签路径不可用，请在设置页重新选择书签文件夹”。",
   "localizedNames": {
     "de": "",
     "ja": "",
@@ -26,12 +26,12 @@
     "URLs"
   ],
   "localizedDescriptions": {
-    "en": "Manage, categorize, download, and update Surge .sgmodule files. Supports recursive folders, custom link prefixes, local modules, concurrent updates, and HTTP remote module toggles.\n\nScript-Hub: its Scripting import button downloads a converted module into the local bookmarked folder. HTTPS is required, with a narrow compatibility exception for Script-Hub's http://script.hub endpoint; a different source cannot silently overwrite the same name. You can also share a converted .sgmodule from iOS Files to write it directly into the Surge bookmark.\n\nCustom sources: save an HTTPS Loon plugin URL, module name, category, folder, and optional User-Agent, then generate a conversion URL and add the module. The repository provides a shared fetch layer and explicit adapter contract, but bundles and scans no third-party source catalog. Community pull requests for third-party source adapters are welcome.\n\nShortcuts: run this script from Scripting to update modules.\nExamples:\n1. No input, or all: update all remote modules.\n2. Category text, e.g. Ads: update that category only.\n3. JSON: {\"category\":\"Ads\",\"dir\":\"Folder\",\"name\":\"Module Name\"}\n4. Multiple names: {\"names\":[\"Module 1\",\"Module 2\"]}\n\nA valid bookmarked folder must be selected in Settings. If bookmark permission is lost, the Shortcut returns an error asking you to reselect the folder.",
+    "en": "Manage, categorize, download, and update Surge .sgmodule files. Supports recursive folders, custom link prefixes, local modules, concurrent updates, and HTTP remote module toggles.\n\nScript-Hub: its Scripting import button downloads a converted module into the local bookmarked folder. HTTPS is required, with a narrow compatibility exception for Script-Hub's http://script.hub endpoint; a different source cannot silently overwrite the same name. You can also share a converted .sgmodule from iOS Files to write it directly into the Surge bookmark.\n\nThird-party sources: source management distinguishes a single plugin/module URL from a user-provided plugin/module marketplace repository. Marketplace directories load on demand without bundled sites, redistribution, or recursive crawling. Script-Hub source and module target formats are selectable; only Surge module targets are written locally, while other targets copy a conversion URL.\n\nShortcuts: run this script from Scripting to update modules.\nExamples:\n1. No input, or all: update all remote modules.\n2. Category text, e.g. Ads: update that category only.\n3. JSON: {\"category\":\"Ads\",\"dir\":\"Folder\",\"name\":\"Module Name\"}\n4. Multiple names: {\"names\":[\"Module 1\",\"Module 2\"]}\n\nA valid bookmarked folder must be selected in Settings. If bookmark permission is lost, the Shortcut returns an error asking you to reselect the folder.",
     "ru": "",
     "pt": "",
     "fr": "",
     "de": "",
-    "zh": "Surge 模块管理：管理、分类、下载/更新 Surge .sgmodule 模块，支持递归子文件夹、链接格式识别、本地模块、并发更新和 HTTP 远程开关控制。\n\nScript-Hub：点击其 Scripting 导入按钮即可下载为本地模块；接受 HTTPS 来源，并兼容 Script-Hub 的 http://script.hub 本地入口；同名不同来源不会静默覆盖。也支持从 iOS 文件分享已转换的 .sgmodule，直接写入 Surge 书签目录。\n\n自定义来源：用户可保存 HTTPS Loon 插件直链、模块名、分类、目录和可选 User-Agent，再生成转换链接并一键写入。仓库提供统一来源抓取和显式适配器结构，但默认不内置、不扫描任何第三方来源目录；欢迎社区提交各类第三方来源适配 PR。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。\n参数示例：\n1. 不传参数，或传 all / 全部：更新全部远程模块。\n2. 传分类名，例如 广告拦截：只更新该分类。\n3. 传 JSON：{\"category\":\"广告拦截\",\"dir\":\"子文件夹名称\",\"name\":\"模块名称\"}\n4. 传多个模块名：{\"names\":[\"模块1\",\"模块2\"]}\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回“书签路径不可用，请在设置页重新选择书签文件夹”。",
+    "zh": "Surge 模块管理：管理、分类、下载/更新 Surge .sgmodule 模块，支持递归子文件夹、链接格式识别、本地模块、并发更新和 HTTP 远程开关控制。\n\nScript-Hub：点击其 Scripting 导入按钮即可下载为本地模块；接受 HTTPS 来源，并兼容 Script-Hub 的 http://script.hub 本地入口；同名不同来源不会静默覆盖。也支持从 iOS 文件分享已转换的 .sgmodule，直接写入 Surge 书签目录。\n\n第三方来源：来源管理区分单个插件/模块直链和用户主动填写的插件/模块市场仓库。市场目录按需加载，不内置站点、不分发内容、不递归扫描；Script-Hub 源格式和模块目标格式可选，只有 Surge 模块目标会写入本地 Surge 目录，其它目标复制转换链接。\n\n快捷指令：可用 Scripting 的“运行脚本”调用本脚本来更新模块。\n参数示例：\n1. 不传参数，或传 all / 全部：更新全部远程模块。\n2. 传分类名，例如 广告拦截：只更新该分类。\n3. 传 JSON：{\"category\":\"广告拦截\",\"dir\":\"子文件夹名称\",\"name\":\"模块名称\"}\n4. 传多个模块名：{\"names\":[\"模块1\",\"模块2\"]}\n\n注意：需要先在设置页选择有效书签文件夹；如果书签权限失效，快捷指令会返回“书签路径不可用，请在设置页重新选择书签文件夹”。",
     "ja": "",
     "it": "",
     "es": ""
@@ -43,5 +43,5 @@
     "name": "ranzhigg",
     "homepage": "https://github.com/ranzhigg"
   },
-  "version": "3.0.25"
+  "version": "3.0.26"
 }

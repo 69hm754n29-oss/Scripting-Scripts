@@ -776,6 +776,12 @@ export function HomeView() {
   }
 
   async function importFromCustomSource(request: SourceImportRequest): Promise<{ ok: boolean; message?: string }> {
+    if (request.targetFormat !== "surge-module") {
+      return {
+        ok: false,
+        message: "当前脚本只能把 Surge 模块目标写入 Surge 目录；请复制其它目标格式的转换链接到对应客户端。",
+      }
+    }
     const current = modules.length ? modules : await loadModules()
     const nameExists = current.some((item) => item.name === request.moduleName)
     if (nameExists) {
