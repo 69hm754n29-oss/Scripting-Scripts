@@ -1038,10 +1038,12 @@ export function HomeView() {
   const showTopCard = showStatusPanel || selectionMode
   const showSearchPanel = searchVisible || !!searchKey
   const showTopInset = showSearchPanel || showTopCard
-  // Keep the quick filters on one line on narrow iPhone screens. The full
-  // category list remains available from the overflow menu.
-  const chipOptions = filterOptions.length > 4 ? filterOptions.slice(0, 3) : filterOptions
-  const categoryMenuLabel = chipOptions.includes(filterCategory) ? "更多" : filterCategory
+  // Keep all four built-in categories visible. "全部" is kept in the menu so
+  // an actual category (including 广告) is never hidden behind the overflow
+  // control. If a user adds more categories, the selected extra category is
+  // shown as the menu label.
+  const chipOptions = categories.slice(0, 4)
+  const categoryMenuLabel = chipOptions.includes(filterCategory) ? "全部" : filterCategory
 
   return (
     <NavigationStack>
