@@ -14,6 +14,7 @@ import { getIntentFileURLs } from "./utils/intent_input"
     const fileURLs = getIntentFileURLs(Intent as any)
     const result = await runShortcutUpdate({
       shortcutParameter: Intent.shortcutParameter,
+      urlsParameter: Intent.urlsParameter,
       textsParameter: Intent.textsParameter,
       fileURLsParameter: fileURLs,
       queryParameters,

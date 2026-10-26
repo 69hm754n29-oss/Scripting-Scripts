@@ -15,6 +15,19 @@ import { downloadModule, writeModuleText } from "./downloader"
 import { isSameRemoteUrl, parseScriptHubImport, sanitizeModuleName } from "./deep_link_import"
 import { withTimeout } from "./async"
 import { recordRecentImport } from "./recent_imports"
+import { fetchSourceText } from "./source_fetcher"
+import {
+  buildScriptHubConversionURL,
+  detectScriptHubSourceFormat,
+  deriveModuleNameFromSource,
+  isScriptHubSourceTargetCompatible,
+  normalizeModuleName,
+  SCRIPT_HUB_SOURCE_FORMATS,
+  SCRIPT_HUB_TARGET_FORMATS,
+  suggestedScriptHubTargetFormat,
+  type ScriptHubSourceFormat,
+  type ScriptHubTargetFormat,
+} from "./script_hub_adapter"
 
 type ShortcutOptions = {
   category?: string
@@ -23,8 +36,22 @@ type ShortcutOptions = {
   names?: string[]
 }
 
+type SharedSourceRequest = {
+  sourceURL: string
+  name?: string
+  filename?: string
+  category?: string
+  sourceFormat?: ScriptHubSourceFormat
+  targetFormat?: ScriptHubTargetFormat
+  sourceUserAgent?: string
+  headers?: string
+  removeSourceMetadata?: boolean
+  enableJQ?: boolean
+}
+
 export type ShortcutUpdateInput = {
   shortcutParameter?: ShortcutParameter
+  urlsParameter?: string[]
   textsParameter?: string[]
   fileURLsParameter?: string[]
   queryParameters?: Record<string, any> | null
@@ -103,6 +130,214 @@ function parseShortcutOptions(input: ShortcutUpdateInput, log: Logger): Shortcut
   }
 
   return {}
+}
+
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value
+  const raw = String(value ?? "").trim().toLowerCase()
+  if (raw === "true" || raw === "1" || raw === "yes") return true
+  if (raw === "false" || raw === "0" || raw === "no") return false
+  return undefined
+}
+
+function parseSourceFormat(value: unknown): ScriptHubSourceFormat | undefined {
+  const raw = String(value ?? "").trim()
+  return SCRIPT_HUB_SOURCE_FORMATS.some((item) => item.value === raw)
+    ? raw as ScriptHubSourceFormat
+    : undefined
+}
+
+function parseTargetFormat(value: unknown): ScriptHubTargetFormat | undefined {
+  const raw = String(value ?? "").trim()
+  return SCRIPT_HUB_TARGET_FORMATS.some((item) => item.value === raw)
+    ? raw as ScriptHubTargetFormat
+    : undefined
+}
+
+function extractSharedURL(value: unknown): string {
+  const raw = String(value ?? "").trim()
+  if (!raw) return ""
+  const match = raw.match(/https?:\/\/[^\s<>"']+/i)
+  const candidate = String(match?.[0] ?? raw).replace(/[),.;!?，。；！？]+$/g, "")
+  try {
+    const parsed = new URL(candidate)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return ""
+    return parsed.toString()
+  } catch {
+    return ""
+  }
+}
+
+function parseSharedSourceObject(value: Record<string, any>): SharedSourceRequest | null {
+  const sourceURL = extractSharedURL(value.url ?? value.sourceURL ?? value.source ?? value.link)
+  if (!sourceURL) return null
+  return {
+    sourceURL,
+    name: String(value.name ?? value.moduleName ?? "").trim() || undefined,
+    filename: String(value.filename ?? value.fileName ?? "").trim() || undefined,
+    category: String(value.category ?? "").trim() || undefined,
+    sourceFormat: parseSourceFormat(value.sourceFormat ?? value.sourceType ?? value.type),
+    targetFormat: parseTargetFormat(value.targetFormat ?? value.targetType ?? value.target),
+    sourceUserAgent: String(value.userAgent ?? value.sourceUserAgent ?? "").trim() || undefined,
+    headers: String(value.headers ?? "").trim() || undefined,
+    removeSourceMetadata: parseOptionalBoolean(value.removeSourceMetadata ?? value.removeMetadata),
+    enableJQ: parseOptionalBoolean(value.enableJQ ?? value.jqEnabled),
+  }
+}
+
+function parseSharedSourceValue(value: unknown): SharedSourceRequest | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return parseSharedSourceObject(value as Record<string, any>)
+  }
+
+  const raw = String(value ?? "").trim()
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parseSharedSourceObject(parsed as Record<string, any>)
+    }
+  } catch {}
+
+  const sourceURL = extractSharedURL(raw)
+  return sourceURL ? { sourceURL } : null
+}
+
+function sharedSourceRequest(input: ShortcutUpdateInput): SharedSourceRequest | null {
+  const query = input.queryParameters ?? {}
+  const queryValues = [
+    query.sh_source_url,
+    query.source_url,
+    query.sourceURL,
+    query.source,
+    query.url,
+  ].filter(Boolean)
+  const parameter: any = input.shortcutParameter as any
+  const values: unknown[] = [
+    ...queryValues,
+    ...(input.urlsParameter ?? []),
+    parameter?.type === "json" ? parameter.value : undefined,
+    parameter?.value,
+    ...(input.textsParameter ?? []),
+  ]
+  for (const value of values) {
+    const request = parseSharedSourceValue(value)
+    if (request) return request
+  }
+  return null
+}
+
+async function runSharedSourceConversion(
+  input: ShortcutUpdateInput,
+  log: Logger,
+): Promise<ShortcutUpdateResult | null> {
+  const request = sharedSourceRequest(input)
+  if (!request) return null
+
+  let detection = detectScriptHubSourceFormat(request.sourceURL)
+  try {
+    const source = await withTimeout(
+      () => fetchSourceText(request.sourceURL, {
+        userAgent: request.sourceUserAgent,
+        maxChars: 512 * 1024,
+        debugLabel: "Script-Hub 快捷指令格式识别",
+      }),
+      IMPORT_STAGE_TIMEOUT_MS,
+      `读取分享来源超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）`,
+    )
+    detection = detectScriptHubSourceFormat(request.sourceURL, source.text)
+    log(`shared source format confidence=${detection.confidence}: ${detection.reason}`)
+  } catch (e: any) {
+    log(`shared source format fallback: ${String(e?.message ?? e)}`)
+  }
+  const sourceFormat = request.sourceFormat ?? detection.sourceFormat
+  const targetFormat = request.targetFormat
+    ?? suggestedScriptHubTargetFormat(sourceFormat, "surge-module")
+  if (!isScriptHubSourceTargetCompatible(sourceFormat, targetFormat)) {
+    throw new Error(`来源格式 ${sourceFormat} 不支持目标格式 ${targetFormat}`)
+  }
+
+  const name = normalizeModuleName(request.name || deriveModuleNameFromSource(request.sourceURL), request.sourceURL)
+  const conversionURL = buildScriptHubConversionURL({
+    sourceURL: request.sourceURL,
+    sourceFormat,
+    targetFormat,
+    moduleName: name,
+    filename: request.filename,
+    category: request.category,
+    sourceUserAgent: request.sourceUserAgent,
+    headers: request.headers,
+    removeSourceMetadata: request.removeSourceMetadata,
+    enableJQ: request.enableJQ,
+  })
+
+  log(`shared source detected: ${sourceFormat} -> ${targetFormat}, name=${name}`)
+  log(`shared source conversion: ${request.sourceURL}`)
+
+  // Shortcut output can be consumed by another action when the user requests
+  // a non-Surge target.  The default Surge-module path writes and verifies the
+  // result just like the Script-Hub UI.
+  if (targetFormat !== "surge-module") {
+    return {
+      text: `转换链接已生成（未写入 Surge）：\n${conversionURL}\n\n来源格式：${sourceFormat}\n目标格式：${targetFormat}`,
+      logs: [],
+    }
+  }
+
+  await withTimeout(
+    () => ensureStorage(),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `访问书签目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s），请确认 Surge iCloud 目录已授权并可用`,
+  )
+  const baseDir = await withTimeout(
+    () => getModulesDirResolved(),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `解析书签目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s），请重新选择 Surge 目录`,
+  )
+  if (!baseDir) throw new Error("书签路径不可用，请在设置页重新选择书签文件夹")
+
+  const current = await withTimeout(
+    () => loadModules(baseDir),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `读取 Surge 模块目录超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）`,
+  )
+  const sameName = current.find((item) => item.name === name)
+  if (sameName && sameName.link && !isSameRemoteUrl(sameName.link, conversionURL)) {
+    throw new Error(`本地已存在同名模块“${name}”，且来源不同；为避免覆盖，转换已取消`)
+  }
+  const sameLink = current.find((item) => item.link && isSameRemoteUrl(item.link, conversionURL))
+  if (sameLink && sameLink.name !== name) {
+    throw new Error(`本地已存在相同转换链接：${sameLink.name}`)
+  }
+
+  const info: ModuleInfo = {
+    name,
+    link: conversionURL,
+    sourceURL: request.sourceURL,
+    category: request.category || sameName?.category,
+    saveDir: baseDir,
+    isLocal: false,
+  }
+  log(`shared source stage: downloading conversion result`)
+  const result = await withTimeout(
+    () => downloadModule(info, { mode: "direct" }),
+    IMPORT_TOTAL_TIMEOUT_MS,
+    `分享链接转换超时（${IMPORT_TOTAL_TIMEOUT_MS / 1000}s）`,
+  )
+  if (!result.ok) throw new Error(result.message ?? "分享链接转换失败")
+
+  const saved = await withTimeout(
+    () => loadModuleAtPath(result.path ?? moduleFilePath(name, baseDir)),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `读取转换结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
+  )
+  if (info.category) persistCategory(info.category)
+  recordRecentImport(saved ?? info)
+  log(`shared source stage: write verified at ${result.path ?? "unknown"}`)
+  return {
+    text: `分享链接已转换并写入 Surge 模块：${name}\n写入路径：${result.path ?? "未返回路径"}\n来源格式：${sourceFormat}\n目标格式：${targetFormat}\n请回到 Surge 刷新或重新启用该本地模块。`,
+    logs: [],
+  }
 }
 
 function applyShortcutFilters(list: ModuleInfo[], options: ShortcutOptions, baseDir: string): ModuleInfo[] {
@@ -308,6 +543,12 @@ export async function runShortcutUpdate(input: ShortcutUpdateInput = {}): Promis
     // import before its stage timeouts are installed.
     const importResult = await runScriptHubImport(input.queryParameters, log)
     if (importResult) return importResult
+
+    // A URL or text shared from Shortcuts is a source for the same conversion
+    // core used by the Script-Hub page.  Handle it before batch-update parsing
+    // so a URL is never mistaken for a category name.
+    const sharedSourceResult = await runSharedSourceConversion(input, log)
+    if (sharedSourceResult) return sharedSourceResult
 
     const localFileResult = await runLocalFileImport(input.fileURLsParameter, log)
     if (localFileResult) return localFileResult

@@ -89,22 +89,19 @@ function sourceFormatFromPath(value: unknown): ScriptHubSourceFormat {
   const raw = String(value ?? "").split(/[?#]/, 1)[0].toLowerCase()
   if (/\.(?:plugin|lpx)$/.test(raw)) return "loon-plugin"
   if (/\.(?:list|rules?)$/.test(raw)) return "rule-set"
-  // A community repository commonly uses `.js` for a QX rewrite source whose
-  // executable body is embedded below `[rewrite_local]`.  The extension alone
-  // must not force Script-Hub's script-conversion endpoint.  Keep `.script`
-  // as the explicit opt-in for a standalone QX script, while treating `.js`
-  // as the module-compatible rewrite source that can become a Surge module.
+  // `.snippet` is commonly used by Quantumult X rewrite collections, while a
+  // standalone `.js` is the script source convention used by Script-Hub.
+  // Content detection below still wins when a file exposes an explicit
+  // module/rewrite section.
   if (/\.script$/.test(raw)) return "qx-script"
-  if (/\.js$/.test(raw)) return "qx-rewrite"
+  if (/\.js$/.test(raw)) return "qx-script"
   if (/\.(?:sgmodule|sgmodulle)$/.test(raw)) return "surge-module"
   if (/\.conf$/.test(raw)) return "qx-rewrite"
-  if (/\.snippet$/.test(raw)) return "plain-text"
+  // QX community rewrite collections commonly use `.snippet`; it is a
+  // rewrite source, not a generic text file.  A standalone `.js` is handled
+  // as a script below when its content does not expose rewrite sections.
+  if (/\.snippet$/.test(raw)) return "qx-rewrite"
   return "loon-plugin"
-}
-
-function isJavaScriptPath(value: unknown): boolean {
-  const raw = String(value ?? "").split(/[?#]/, 1)[0].toLowerCase()
-  return /\.js$/.test(raw)
 }
 
 function normalizedSourceContent(value: unknown): string {
@@ -160,11 +157,9 @@ function looksLikeJavaScript(content: string): boolean {
 
 /**
  * Detect the actual Script-Hub input type. Filename-only detection is not
- * enough for community repositories: many of them publish module/rewrite text
- * with a `.js` suffix. Content signals win over the suffix. A standalone QX
- * script is only inferred from the explicit `.script` extension (or selected
- * manually in the UI), so an ordinary marketplace `.js` file stays eligible
- * for the Surge-module conversion endpoint.
+ * enough for community repositories. Content signals win over the suffix;
+ * when the content is unavailable, `.snippet` is treated as QX rewrite and
+ * `.js` is treated as a QX script source.
  */
 export function detectScriptHubSourceFormat(
   value: unknown,
@@ -186,25 +181,23 @@ export function detectScriptHubSourceFormat(
     if (looksLikeQXRewrite(text)) {
       return { sourceFormat: "qx-rewrite", confidence: "high", reason: "检测到 Quantumult X 重写语法" }
     }
-    // Do not classify every JavaScript-looking `.js` file as a QX script. In
-    // community module repositories the JS body and the QX rewrite header are
-    // often shipped together, and some files omit the header while still being
-    // intended for the module converter. `.script` is the explicit standalone
-    // script convention; its target remains Surge script (compatible).
+    // A JavaScript-looking source with a `.js`/`.script` path is an explicit
+    // script source. Script-Hub can still convert it to a module, so the
+    // default target is Surge/Egern module rather than Surge script only.
     if (looksLikeJavaScript(text) && fallback === "qx-script") {
       return {
         sourceFormat: "qx-script",
-        suggestedTargetFormat: "surge-script",
+        suggestedTargetFormat: "surge-module",
         confidence: "medium",
-        reason: "检测到 .script 独立脚本内容；目标应使用 Surge 脚本（兼容）",
+        reason: "检测到独立脚本内容；默认按可转换为 Surge 模块的脚本源处理",
       }
     }
-    if (looksLikeJavaScript(text)) {
+    if (looksLikeJavaScript(text) && fallback === "qx-rewrite") {
       return {
         sourceFormat: "qx-rewrite",
         suggestedTargetFormat: "surge-module",
         confidence: "medium",
-        reason: "检测到 JavaScript 来源；按可转换模块源处理，目标使用 Surge 模块",
+        reason: "检测到 JavaScript 重写来源；按 QX 重写处理，目标使用 Surge 模块",
       }
     }
     if (/^\s*#!(?:name|desc|category|icon|author)\s*=/im.test(text)) {
@@ -215,19 +208,9 @@ export function detectScriptHubSourceFormat(
   if (fallback === "qx-script") {
     return {
       sourceFormat: fallback,
-      suggestedTargetFormat: "surge-script",
-      confidence: "low",
-      reason: "按 .script 后缀判断；未能读取内容确认格式",
-    }
-  }
-  if (isJavaScriptPath(value) && fallback === "qx-rewrite") {
-    return {
-      sourceFormat: fallback,
       suggestedTargetFormat: "surge-module",
-      confidence: text ? "low" : "medium",
-      reason: text
-        ? "未检测到独立脚本标记；按第三方 .js 模块源处理，目标使用 Surge 模块"
-        : "按第三方 .js 模块源处理，目标使用 Surge 模块",
+      confidence: "low",
+      reason: "按脚本后缀判断；未能读取内容确认格式，默认使用 Surge 模块目标",
     }
   }
   return {
@@ -246,14 +229,19 @@ export function isScriptHubSourceTargetCompatible(
   sourceFormat: ScriptHubSourceFormat,
   targetFormat: ScriptHubTargetFormat,
 ): boolean {
-  return sourceFormat !== "qx-script" || targetFormat === "surge-script"
+  if (sourceFormat !== "qx-script") return true
+  // Script-Hub can wrap most QX JavaScript sources as a module.  Keep the
+  // explicit Surge-script target for scripts that must remain executable, but
+  // do not reject the common script-to-module path.
+  return targetFormat === "surge-module" || targetFormat === "surge-script"
 }
 
 export function suggestedScriptHubTargetFormat(
   sourceFormat: ScriptHubSourceFormat,
   currentTarget: ScriptHubTargetFormat,
 ): ScriptHubTargetFormat {
-  return sourceFormat === "qx-script" ? "surge-script" : currentTarget
+  if (sourceFormat !== "qx-script") return currentTarget
+  return currentTarget === "surge-script" ? "surge-script" : "surge-module"
 }
 
 export type ScriptHubConversionOptions = {

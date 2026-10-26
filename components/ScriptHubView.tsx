@@ -261,7 +261,7 @@ function ActionButton(props: {
 
 function compatibleTargets(sourceFormat: ScriptHubSourceFormat): typeof SCRIPT_HUB_TARGET_FORMATS {
   if (sourceFormat === "qx-script") {
-    return SCRIPT_HUB_TARGET_FORMATS.filter((item) => item.value === "surge-script")
+    return SCRIPT_HUB_TARGET_FORMATS.filter((item) => item.value === "surge-module" || item.value === "surge-script")
   }
   if (sourceFormat === "rule-set") {
     return SCRIPT_HUB_TARGET_FORMATS.filter((item) => (
@@ -400,7 +400,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     if (!hasSource) return { url: "", error: "" }
     try {
       if (!isScriptHubSourceTargetCompatible(sourceFormat, targetFormat)) {
-        throw new Error("QX 专属脚本只能转换为 Surge 脚本（兼容）")
+        throw new Error("QX 专属脚本仅支持转换为 Surge / Egern 模块或 Surge 脚本（兼容）")
       }
       const name = moduleName.trim() || localModuleName
       return {
@@ -805,6 +805,17 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 action={() => { void detectFormat() }}
               />
             </HStack>
+            <Text
+              font="caption"
+              foregroundStyle={sourceFormat === "qx-script" ? "systemBlue" : "secondaryLabel"}
+              lineLimit={3}
+            >
+              {sourceFormat === "qx-script"
+                ? "这是脚本源：默认按 Script-Hub 逻辑转换为 Surge / Egern 模块；需要独立执行时再选择 Surge 脚本。"
+                : sourceFormat === "qx-rewrite"
+                  ? "这是 Quantumult X 重写源，通常可直接转换为 Surge / Egern 模块。"
+                  : "目标格式会决定转换结果的扩展名和客户端导入方式。"}
+            </Text>
             <Picker
               title="目标格式"
               pickerStyle="menu"
@@ -830,7 +841,7 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
                 来源类型按原始文件语法选择：QX 重写、Surge 模块、Loon 插件、规则集、QX 专属脚本或纯文本。目标类型按你要导入的客户端选择；普通插件或模块通常使用“Surge / Egern 模块”。
               </Text>
               <Text font="caption" foregroundStyle="systemOrange" lineLimit={4}>
-                QX 专属脚本只能转换为 Surge 脚本（兼容），不能直接伪装成 Surge 模块写入模块目录。
+                QX 专属脚本默认转换为 Surge / Egern 模块；只有需要保留独立执行语义时，才选择“Surge 脚本（兼容）”。
               </Text>
             </DisclosureGroup>
           </DisclosureGroup>

@@ -7,6 +7,7 @@ function hasShortcutInput(): boolean {
   const fileURLs = getIntentFileURLs(Intent as any)
   return !!(
     Intent.shortcutParameter ||
+    Intent.urlsParameter?.length ||
     Intent.textsParameter?.length ||
     fileURLs.length
   )
@@ -40,6 +41,7 @@ async function runExternalInput(queryParameters: Record<string, any> | null | un
     )
     const result = await runShortcutUpdate({
       shortcutParameter: Intent.shortcutParameter,
+      urlsParameter: Intent.urlsParameter,
       textsParameter: Intent.textsParameter,
       fileURLsParameter: fileURLs,
       queryParameters,

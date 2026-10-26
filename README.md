@@ -29,8 +29,9 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 - 使用上游 Script-Hub 测试版作为转换核心
 - 输入插件/模块 HTTPS 直链，或直接粘贴本地文本内容，自动识别常见格式
-- 支持 QX 重写、Surge 模块、Loon 插件、规则集、QX 专属脚本和纯文本源格式
+- 支持 QX 重写（包括常见 `.snippet`）、Surge 模块、Loon 插件、规则集、QX 脚本（`.js`）和纯文本源格式
 - 支持 Surge、Egern、Stash、Shadowrocket、Loon 等目标格式
+- 脚本源默认按 Script-Hub 逻辑转换为 Surge / Egern 模块；需要保留独立执行语义时可选择 Surge 脚本（兼容）
 - 可设置模块名、文件名、描述、分类、来源 User-Agent、请求头、元数据和 jq 兼容选项
 - 高级参数覆盖重写/规则筛选、脚本兼容、定时任务、脚本参数和运行选项
 - 支持预览、复制转换链接，以及 Surge、Egern、Scriptable、Scripting 等导入入口
@@ -83,10 +84,14 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 可以通过 Scripting 的“运行脚本”调用：
 
+- 直接把一个 HTTPS 插件/模块链接分享到本脚本：脚本会按 Script-Hub 逻辑识别、转换并写入 Surge 模块目录
+- 也可以传入 JSON 指定转换选项：`{"url":"https://example.com/a.js","name":"模块名称","category":"脚本","sourceFormat":"qx-script","targetFormat":"surge-module"}`
 - 不传参数或传入 `all`：更新全部远程模块
 - 传入分类名：只更新指定分类
 - 传入 JSON：`{"category":"广告拦截","name":"模块名称"}`
 - 传入多个模块名：`{"names":["模块1","模块2"]}`
+
+分享链接转换需要在项目标题 → Intent 设置中启用 `URLs`；如果通过文本分享链接，也请启用 `Text`。转换后的默认目标是 Surge / Egern 模块，写入前仍需先在脚本设置中授权 Surge 模块目录。
 
 ## 常见问题
 
@@ -100,7 +105,7 @@ https://github.com/ranzhigg/Scripting-Scripts
 
 ### 转换失败或识别不准
 
-先点击“识别来源格式”；在线读取失败时可以在“格式”中手动选择。QX 专属脚本只能转换为“Surge 脚本（兼容）”，不能伪装成 `.sgmodule` 写入 Surge 模块目录。
+先点击“识别来源格式”；在线读取失败时可以在“格式”中手动选择。`.snippet` 按 QX 重写处理，`.js` 按 QX 脚本处理；脚本默认转换为 Surge / Egern 模块，只有需要独立执行时才选择“Surge 脚本（兼容）”。
 
 ### 只想导入本地文件
 
