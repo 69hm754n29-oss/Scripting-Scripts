@@ -33,7 +33,7 @@ async function writeString(fm: any, path: string, content: string): Promise<void
 
 function fetchTimeoutMessage(url: string): string {
   if (/^https?:\/\/script\.hub(?:\/|$)/i.test(url)) {
-    return `Script-Hub 转换结果请求超时（${FETCH_TIMEOUT_MS / 1000}s）。script.hub/file 不是普通公网下载地址，必须确认当前 Scripting 流量经过 Surge，且 Script Hub 模块和脚本均已启用`
+    return `Script-Hub 转换结果请求超时（${FETCH_TIMEOUT_MS / 1000}s）。script.hub/file 或 convert 不是普通公网下载地址，必须确认当前 Scripting 流量经过 Surge，且 Script Hub 模块和脚本均已启用`
   }
   return `模块请求超时（${FETCH_TIMEOUT_MS / 1000}s）：${url}`
 }
