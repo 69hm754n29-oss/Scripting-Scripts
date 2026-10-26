@@ -1,5 +1,14 @@
 # 更新日志
 
+## v4.2.0
+
+- Script-Hub 页面增加 Quantumult X、Loon、Surge、Egern 目标平台选择，平台会同步目标格式、扩展名、快速操作和底部当前平台提示。
+- 对接常用官方导入方式：Quantumult X `add-resource`、Loon `loon://import`、Egern `egern:/`、Surge `surge:///install-module`。
+- 增加 Scripting 原生“模块导入”平台：可在 `.sgmodule`（Surge）和 `.plugin`（Loon）之间切换，并通过 `scripting://import_module?url=...` 快速拉起导入页。
+- Surge 模块继续支持写入已授权目录；其他平台优先直接拉起客户端，不支持的来源/目标组合自动退回复制转换结果。
+- 保留上游 Script-Hub 测试版作为唯一转换核心，脚本只负责平台适配、导入链接和本地写入。
+- README 收敛为安装、依赖、兼容范围和使用说明，移除重复的旧功能说明；历史变更仍保留在本更新日志中。
+
 ## v4.1.2
 
 - Script-Hub 页面默认只展开“来源”；“格式与目标”和“输出设置”改为收起，减少首次进入时的滚动长度。
