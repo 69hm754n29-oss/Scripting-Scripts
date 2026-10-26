@@ -111,6 +111,11 @@ function normalizedSourceContent(value: unknown): string {
     .slice(0, 512 * 1024)
 }
 
+export function scriptHubSourceCategory(value: unknown): string {
+  const match = String(value ?? "").match(/^\s*#!\s*category\s*=\s*(.+?)\s*$/im)
+  return String(match?.[1] ?? "").trim().slice(0, 64)
+}
+
 function hasSection(content: string, names: string): boolean {
   return new RegExp(`^\\s*\\[(?:${names})\\]\\s*$`, "im").test(content)
 }

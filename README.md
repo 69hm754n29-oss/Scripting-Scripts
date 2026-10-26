@@ -33,6 +33,7 @@ https://github.com/ranzhigg/Scripting-Scripts
 - 支持 Surge、Egern、Stash、Shadowrocket、Loon 等目标格式
 - 脚本源默认按 Script-Hub 逻辑转换为 Surge / Egern 模块；需要保留独立执行语义时可选择 Surge 脚本（兼容）
 - 可设置模块名、文件名、描述、分类、来源 User-Agent、请求头、元数据和 jq 兼容选项
+- 输出设置默认将模块归入“插件”；来源文本包含 `#!category=` 且未手动指定分类时，会优先沿用来源自带分类
 - 高级参数覆盖重写/规则筛选、脚本兼容、定时任务、脚本参数和运行选项
 - 支持预览、复制转换链接，以及 Surge、Egern、Scriptable、Scripting 等导入入口
 - 把 Surge 模块目标直接写入已授权的 Surge 目录
