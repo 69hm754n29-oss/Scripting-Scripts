@@ -1,5 +1,6 @@
 import { Path } from "scripting"
 import { loadConfig } from "./config"
+import { backupModulePath } from "./backups"
 
 export type ModuleInfo = {
   name: string
@@ -438,6 +439,7 @@ export async function updateModuleMetadata(
   if (info.local !== undefined) {
     content = upsertTag(content, "local", info.local ? "true" : "")
   }
+  await backupModulePath(path)
   await fm.writeAsString(path, content)
 }
 
@@ -451,6 +453,7 @@ export async function saveLocalModule(info: ModuleInfo, rawContent: string): Pro
   let content = String(rawContent ?? "")
   content = upsertTag(content, "local", "true")
   content = upsertTag(content, "category", info.category)
+  await backupModulePath(path)
   await fm.writeAsString(path, content)
 }
 
@@ -522,6 +525,7 @@ export async function renameCategoryInModules(oldName: string, newName: string, 
     const cat = parseTag(text, "category")
     if (!cat || cat !== oldName) continue
     let content = upsertTag(text, "category", newName)
+    await backupModulePath(path)
     await fm.writeAsString(path, content)
   }
 }

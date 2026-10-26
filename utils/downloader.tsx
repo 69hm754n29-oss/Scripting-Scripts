@@ -10,9 +10,12 @@ import {
 import { downloadWithProgress } from "./stream_downloader"
 import { validateSurgeModuleText } from "./module_validation"
 import { withTimeout } from "./async"
+import { backupModulePath } from "./backups"
 
 export type DownloadModuleOptions = {
   mode?: "stream" | "direct"
+  /** Raw remote text already fetched by the update preview flow. */
+  content?: string
 }
 
 const FETCH_TIMEOUT_MS = 30 * 1000
@@ -48,6 +51,17 @@ function injectCategory(content: string, category?: string): string {
     return content.replace(/^\s*#!\s*category\s*=.*$/im, line)
   }
   return `${line}\n${content}`
+}
+
+function prepareModuleText(
+  rawText: string,
+  info: ModuleInfo & { linkPrefix?: string },
+): string {
+  const safeText = validateSurgeModuleText(rawText)
+  let content = injectNameFlag(safeText)
+  content = injectUrl(content, info.link, info.linkPrefix)
+  content = injectCategory(content, info.category)
+  return content
 }
 
 function injectUrl(content: string, url?: string, preferredPrefix?: string): string {
@@ -118,13 +132,10 @@ async function writeFinalModule(
   targetDir: string,
   rawText: string
 ): Promise<string> {
-  const safeText = validateSurgeModuleText(rawText)
-
-  let content = injectNameFlag(safeText)
-  content = injectUrl(content, info.link, info.linkPrefix)
-  content = injectCategory(content, info.category)
+  const content = prepareModuleText(rawText, info)
 
   const path = moduleFilePath(info.name, targetDir)
+  await backupModulePath(path)
   await withTimeout(
     () => writeString(fm, path, content),
     FILE_OPERATION_TIMEOUT_MS,
@@ -164,6 +175,7 @@ export async function writeModuleText(
     // belongs to the URL-download path.
     const content = validateSurgeModuleText(rawText)
     const path = moduleFilePath(info.name, targetDir)
+    await backupModulePath(path)
     await withTimeout(
       () => writeString(fm, path, content),
       FILE_OPERATION_TIMEOUT_MS,
@@ -188,17 +200,22 @@ export async function writeModuleText(
 async function downloadModuleDirect(
   fm: any,
   info: ModuleInfo & { linkPrefix?: string },
-  targetDir: string
+  targetDir: string,
+  sourceContent?: string,
 ): Promise<string> {
-  const text = await fetchModuleText(info.link)
+  const text = sourceContent ?? await fetchModuleText(info.link)
   return writeFinalModule(fm, info, targetDir, text)
 }
 
 async function downloadModuleStream(
   fm: any,
   info: ModuleInfo & { linkPrefix?: string },
-  targetDir: string
+  targetDir: string,
+  sourceContent?: string,
 ): Promise<string> {
+  if (sourceContent !== undefined) {
+    return writeFinalModule(fm, info, targetDir, sourceContent)
+  }
   const tmpDir = fm.temporaryDirectory ?? Path.join(Path.dirname(moduleFilePath(info.name, targetDir)), ".tmp")
   const tmpPath = Path.join(tmpDir, `${info.name}_${Date.now()}.tmp`)
 
@@ -243,12 +260,64 @@ export async function downloadModule(
   try {
     let path: string
     if (options.mode === "direct") {
-      path = await downloadModuleDirect(fm, info, targetDir)
+      path = await downloadModuleDirect(fm, info, targetDir, options.content)
     } else {
-      path = await downloadModuleStream(fm, info, targetDir)
+      path = await downloadModuleStream(fm, info, targetDir, options.content)
     }
     return { ok: true, path }
   } catch (e: any) {
     return { ok: false, message: String(e?.message ?? e) }
+  }
+}
+
+export type ModuleUpdatePreview = {
+  path: string
+  sourceContent: string
+  currentContent: string
+  nextContent: string
+  changed: boolean
+  addedCount: number
+  removedCount: number
+  added: string[]
+  removed: string[]
+}
+
+function normalizePreviewText(value: string): string {
+  return String(value ?? "").replace(/\r\n/g, "\n")
+}
+
+/** Fetch and prepare a remote module without writing it to disk. */
+export async function previewModuleUpdate(
+  info: ModuleInfo & { linkPrefix?: string },
+): Promise<ModuleUpdatePreview> {
+  if (!info.link) throw new Error("本地模块无下载链接，无法预览更新")
+  const fm: any = (globalThis as any).FileManager
+  if (!fm?.readAsString) throw new Error("FileManager.readAsString 不可用")
+
+  const sourceContent = await fetchModuleText(info.link)
+  const nextContent = prepareModuleText(sourceContent, info)
+  const path = info.filePath ?? moduleFilePath(info.name, info.saveDir)
+  let currentContent = ""
+  if (typeof fm.exists !== "function" || await fm.exists(path)) {
+    currentContent = normalizePreviewText(await fm.readAsString(path))
+  }
+
+  const oldLines = currentContent.split("\n")
+  const nextLines = normalizePreviewText(nextContent).split("\n")
+  const oldSet = new Set(oldLines)
+  const nextSet = new Set(nextLines)
+  const addedAll = nextLines.filter((line) => line.trim() && !oldSet.has(line))
+  const removedAll = oldLines.filter((line) => line.trim() && !nextSet.has(line))
+
+  return {
+    path,
+    sourceContent,
+    currentContent,
+    nextContent,
+    changed: currentContent !== normalizePreviewText(nextContent),
+    addedCount: addedAll.length,
+    removedCount: removedAll.length,
+    added: addedAll.slice(0, 12),
+    removed: removedAll.slice(0, 12),
   }
 }

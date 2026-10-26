@@ -38,7 +38,7 @@ import {
   moveModuleFile,
 } from "../utils/storage"
 import { loadConfig, type AppConfig } from "../utils/config"
-import { downloadModule } from "../utils/downloader"
+import { downloadModule, previewModuleUpdate, type ModuleUpdatePreview } from "../utils/downloader"
 import { EditModuleView } from "./EditModuleView"
 import { RemoteControlView } from "./RemoteControlView"
 import { SettingsView } from "./SettingsView"
@@ -49,6 +49,12 @@ import {
   setRemoteModuleEnabled,
 } from "../utils/remote_control"
 import { autoExportMetadataToICloud } from "../utils/metadata_sync"
+import {
+  listModuleBackups,
+  restoreModuleBackup,
+  type ModuleBackup,
+} from "../utils/backups"
+import { inspectModuleHealth } from "../utils/health"
 
 function ModuleIcon(props: { module: ModuleInfo }) {
   const [failed, setFailed] = useState(false)
@@ -214,6 +220,69 @@ function CategoryChip(props: {
       frame={{ minWidth: 54, minHeight: 34 }}
     />
   )
+}
+
+function formatBackupTime(timestamp: number): string {
+  try {
+    return new Date(timestamp).toLocaleString()
+  } catch {
+    return String(timestamp)
+  }
+}
+
+function BackupPickerView(props: {
+  moduleName: string
+  backups: ModuleBackup[]
+}) {
+  const dismiss = Navigation.useDismiss()
+
+  return (
+    <NavigationStack>
+      <List
+        navigationTitle="选择回滚版本"
+        navigationBarTitleDisplayMode="inline"
+      >
+        <Section header={<Text>{props.moduleName}</Text>}>
+          {props.backups.map((backup) => (
+            <Button
+              key={backup.path}
+              title={`${formatBackupTime(backup.timestamp)} · ${backup.label}`}
+              action={() => {
+                HapticFeedback.mediumImpact()
+                dismiss(backup.path)
+              }}
+            />
+          ))}
+        </Section>
+      </List>
+    </NavigationStack>
+  )
+}
+
+function buildPreviewMessage(preview: ModuleUpdatePreview): string {
+  const added = preview.added.length
+    ? preview.added.map((line) => `+ ${line}`).join("\n")
+    : "无新增行"
+  const removed = preview.removed.length
+    ? preview.removed.map((line) => `- ${line}`).join("\n")
+    : "无删除行"
+  const addedMore = preview.addedCount > preview.added.length
+    ? `\n…其余新增 ${preview.addedCount - preview.added.length} 行未展开`
+    : ""
+  const removedMore = preview.removedCount > preview.removed.length
+    ? `\n…其余删除 ${preview.removedCount - preview.removed.length} 行未展开`
+    : ""
+  return [
+    `新增 ${preview.addedCount} 行，删除 ${preview.removedCount} 行`,
+    "",
+    "新增内容：",
+    added + addedMore,
+    "",
+    "删除内容：",
+    removed + removedMore,
+    "",
+    "确认后会自动备份当前文件，再写入新版本。",
+  ].join("\n")
 }
 
 function ModuleSummaryCard(props: {
@@ -564,6 +633,36 @@ export function HomeView() {
     }
   }
 
+  async function runHealthCheck() {
+    if (busy) return
+    setBusy(true)
+    setStage("检查模块健康状态…")
+    try {
+      const report = await inspectModuleHealth(modules)
+      const issueText = report.issues
+        .slice(0, 12)
+        .map((issue) => `${issue.level === "error" ? "❌" : "⚠️"} ${issue.moduleName}：${issue.message}`)
+        .join("\n")
+      const omitted = report.issues.length > 12
+        ? `\n其余 ${report.issues.length - 12} 个问题已省略`
+        : ""
+      const message = report.issues.length
+        ? `已检查 ${report.checked} 个模块\n错误 ${report.errors} 个，警告 ${report.warnings} 个\n\n${issueText}${omitted}`
+        : `已检查 ${report.checked} 个模块，未发现问题。`
+      await Dialog.alert({
+        title: report.issues.length ? "发现模块问题" : "模块状态正常",
+        message,
+      })
+      setStage(report.issues.length ? "健康检查完成：发现问题" : "健康检查完成")
+    } catch (e: any) {
+      const message = String(e?.message ?? e)
+      setStage(`健康检查失败：${message}`)
+      await Dialog.alert({ title: "健康检查失败", message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function addModule() {
     if (!categories.length) {
       await Dialog.alert({ message: "请先在设置页添加分类" })
@@ -711,6 +810,86 @@ export function HomeView() {
     }
   }
 
+  async function previewModuleFor(target: ModuleInfo) {
+    if (!target.link) {
+      await Dialog.alert({ message: "本地模块没有远程内容，无法预览更新" })
+      return
+    }
+
+    let preview: ModuleUpdatePreview | null = null
+    setBusy(true)
+    setStage(`读取更新预览：${target.name}`)
+    try {
+      const linkPrefix = await detectLinkPrefix(target)
+      preview = await previewModuleUpdate({
+        ...target,
+        saveDir: inferSaveDir(target),
+        linkPrefix,
+      })
+      if (!preview.changed) {
+        await Dialog.alert({ title: "无需更新", message: "远程内容与本地文件一致。" })
+        return
+      }
+    } catch (e: any) {
+      const message = String(e?.message ?? e)
+      setStage(`预览失败：${message}`)
+      await Dialog.alert({ title: "更新预览失败", message })
+      return
+    } finally {
+      setBusy(false)
+    }
+
+    if (!preview) return
+    const confirmed = await Dialog.confirm({
+      title: `更新预览：${target.name}`,
+      message: buildPreviewMessage(preview),
+    })
+    if (!confirmed) return
+
+    const sourceContents = new Map<string, string>([
+      [moduleKey(target), preview.sourceContent],
+    ])
+    await downloadBatch([target], `更新模块：${target.name}`, sourceContents)
+  }
+
+  async function restoreModuleFor(target: ModuleInfo) {
+    const path = target.filePath ?? moduleFilePath(target.name)
+    setBusy(true)
+    setStage(`读取备份：${target.name}`)
+    try {
+      const backups = await listModuleBackups(path)
+      if (!backups.length) {
+        await Dialog.alert({ message: "这个模块还没有可用的备份。远程更新或覆盖写入后会自动生成备份。" })
+        return
+      }
+
+      const selectedPath = await Navigation.present<string | null>({
+        element: <BackupPickerView moduleName={target.name} backups={backups} />,
+        modalPresentationStyle: "pageSheet",
+      })
+      if (!selectedPath) return
+
+      const selected = backups.find((backup) => backup.path === selectedPath)
+      const confirmed = await Dialog.confirm({
+        title: "确认回滚",
+        message: `将 ${target.name} 回滚到 ${formatBackupTime(selected?.timestamp ?? 0)}？\n当前文件也会先自动备份。`,
+      })
+      if (!confirmed) return
+
+      setStage(`回滚模块：${target.name}`)
+      await restoreModuleBackup(path, selectedPath)
+      await refreshModules()
+      await syncMetadataIfNeeded()
+      setStage("回滚完成")
+    } catch (e: any) {
+      const message = String(e?.message ?? e)
+      setStage(`回滚失败：${message}`)
+      await Dialog.alert({ title: "回滚失败", message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function deleteModuleFor(target: ModuleInfo) {
     const ok = await Dialog.confirm({
       title: "删除模块",
@@ -752,15 +931,22 @@ export function HomeView() {
     }
   }
 
-  async function downloadSingle(target: ModuleInfo) {
+  async function downloadSingle(target: ModuleInfo, sourceContent?: string) {
     if (!target.link) {
       await Dialog.alert({ message: "本地模块无下载链接，无法更新" })
       return
     }
-    await downloadBatch([target], `下载模块：${target.name}`)
+    const sourceContents = sourceContent === undefined
+      ? undefined
+      : new Map<string, string>([[moduleKey(target), sourceContent]])
+    await downloadBatch([target], `下载模块：${target.name}`, sourceContents)
   }
 
-  async function downloadBatch(list: ModuleInfo[], title: string) {
+  async function downloadBatch(
+    list: ModuleInfo[],
+    title: string,
+    sourceContents?: Map<string, string>,
+  ) {
     const downloadable = list.filter((m) => !!m.link)
     if (!downloadable.length) {
       await Dialog.alert({ message: "暂无可下载模块" })
@@ -794,7 +980,11 @@ export function HomeView() {
 
           const m = downloadable[idx]
           const linkPrefix = await detectLinkPrefix(m)
-          const res = await downloadModule({ ...m, saveDir: inferSaveDir(m), linkPrefix })
+          const sourceContent = sourceContents?.get(moduleKey(m))
+          const res = await downloadModule(
+            { ...m, saveDir: inferSaveDir(m), linkPrefix },
+            sourceContent === undefined ? undefined : { content: sourceContent },
+          )
           if (res.ok) okCount += 1
           else errors.push(`${m.name}: ${res.message ?? "下载失败"}`)
 
@@ -1079,6 +1269,12 @@ export function HomeView() {
                   else setSelectionMode(true)
                 })}
               />
+              <Button
+                title=""
+                systemImage="checkmark.shield"
+                disabled={busy}
+                action={withButtonHaptic(runHealthCheck)}
+              />
               <Button title="" systemImage="gearshape" action={withButtonHaptic(openSettings)} />
             </HStack>
           ),
@@ -1226,7 +1422,11 @@ export function HomeView() {
                     contextMenu={selectionMode ? undefined : {
                       menuItems: (
                         <Group>
+                          {m.link ? (
+                            <Button title="预览更新" action={withButtonHaptic(() => previewModuleFor(m))} />
+                          ) : null}
                           <Button title="查看模块" action={withButtonHaptic(() => viewModuleContent(m))} />
+                          <Button title="回滚版本" action={withButtonHaptic(() => restoreModuleFor(m))} />
                           <Button title="复制链接" action={withButtonHaptic(() => copyModuleLink(m))} />
                           <Button title="删除" role="destructive" action={withButtonHaptic(() => deleteModuleFor(m))} />
                         </Group>
