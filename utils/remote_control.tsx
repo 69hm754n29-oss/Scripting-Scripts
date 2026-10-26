@@ -14,9 +14,21 @@ export type RemoteModuleSnapshot = {
 }
 
 export function getRemoteBaseURL(cfg: AppConfig): string {
-  const host = String(cfg.remoteHost ?? "http://127.0.0.1").trim() || "http://127.0.0.1"
+  const rawHost = String(cfg.remoteHost ?? "").trim()
   const port = String(cfg.remotePort ?? "").trim()
-  return port ? `${host.replace(/\/+$/, "")}:${port}` : ""
+  if (!rawHost || !port || !/^\d{1,5}$/.test(port)) return ""
+  const host = rawHost.replace(/\/+$/, "")
+  try {
+    const parsed = new URL(host.includes("://") ? host : `http://${host}`)
+    if (parsed.port && parsed.port !== port) return ""
+    parsed.port = port
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "")
+    parsed.search = ""
+    parsed.hash = ""
+    return parsed.toString().replace(/\/$/, "")
+  } catch {
+    return ""
+  }
 }
 
 export function getModuleRemoteName(module: { name: string; surgeName?: string }): string {

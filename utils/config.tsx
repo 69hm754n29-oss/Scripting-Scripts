@@ -20,7 +20,7 @@ const DEFAULT_CONFIG: AppConfig = {
   downloadConcurrency: 3,
   iCloudMetadataSync: false,
   remoteHost: "http://127.0.0.1",
-  remotePort: "6171",
+  remotePort: "",
   remotePassword: "",
 }
 

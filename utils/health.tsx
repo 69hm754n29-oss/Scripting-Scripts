@@ -66,7 +66,13 @@ export async function inspectModuleHealth(modules: ModuleInfo[]): Promise<Module
     const moduleName = module.name || "未命名模块"
     const path = String(module.filePath ?? "").trim()
     if (!path) {
-      issues.push({ moduleName, level: "error", message: "没有对应的文件路径" })
+      issues.push({
+        moduleName,
+        level: "warning",
+        message: module.isRemoteOnly
+          ? "Surge API-only 模块：未检查本地内容"
+          : "没有对应的文件路径",
+      })
       continue
     }
     if (!(await fileExists(path))) {

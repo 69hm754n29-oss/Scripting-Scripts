@@ -40,12 +40,16 @@ import {
 import { loadConfig, persistCategory, type AppConfig } from "../utils/config"
 import { downloadModule, previewModuleUpdate, type ModuleUpdatePreview } from "../utils/downloader"
 import { EditModuleView } from "./EditModuleView"
+import { ModuleDetailsView } from "./ModuleDetailsView"
 import { RemoteControlView } from "./RemoteControlView"
+import { getModuleMetadata, saveModuleMetadata } from "../utils/module_metadata"
+import { buildModuleManifest, exportModuleManifest, manifestText } from "../utils/module_manifest"
 import { SettingsView } from "./SettingsView"
 import { useMarkdownReleaseNotesSheet } from "./ReleaseNotesSheet"
 import {
   fetchRemoteModuleSnapshot,
   getModuleRemoteName,
+  getRemoteBaseURL,
   setRemoteModuleEnabled,
 } from "../utils/remote_control"
 import { autoExportMetadataToICloud } from "../utils/metadata_sync"
@@ -437,9 +441,11 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   const [statusCardVisible, setStatusCardVisible] = useState(false)
   const [contentIndexLoaded, setContentIndexLoaded] = useState(false)
   const [enabledModuleNames, setEnabledModuleNames] = useState<Set<string>>(new Set())
+  const [availableModuleNames, setAvailableModuleNames] = useState<Set<string>>(new Set())
+  const [remoteConnected, setRemoteConnected] = useState(false)
+  const [metadataVersion, setMetadataVersion] = useState(0)
   const [togglingModuleNames, setTogglingModuleNames] = useState<Set<string>>(new Set())
   const categories = cfg.categories ?? []
-  const filterOptions = useMemo(() => ["全部", ...categories], [categories])
   const baseDir = resolvedBaseDir || cfg.baseDir
   const dirOptions = useMemo(() => {
     const set = new Set<string>()
@@ -462,24 +468,51 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   const searchKey = searchText.trim().toLowerCase()
+  function metadataFor(module: ModuleInfo) {
+    return getModuleMetadata(module)
+  }
+  function displayCategory(module: ModuleInfo): string {
+    return metadataFor(module).category || String(module.category ?? "").trim()
+  }
+  const categoryOptions = useMemo(() => {
+    const values = new Set<string>(categories)
+    for (const module of modules) {
+      const category = displayCategory(module)
+      if (category) values.add(category)
+    }
+    return ["全部", "未分类", ...Array.from(values).filter((item) => item !== "未分类")]
+  }, [categories, modules, metadataVersion])
+  const sourceFilterOptions = ["全部", "本地模块", "远程源模块", "Surge API 模块"]
+  const [sourceFilter, setSourceFilter] = useState("全部")
   const filteredModules = useMemo(() => {
     return modules.filter((m) => {
-      const catOk = filterCategory === "全部" ? true : m.category === filterCategory
+      const category = displayCategory(m)
+      const catOk = filterCategory === "全部"
+        ? true
+        : filterCategory === "未分类" ? !category : category === filterCategory
       const dirOk = filterDir === "全部" ? true : getTopDir(m) === filterDir
-      if (!catOk || !dirOk || !searchKey) return catOk && dirOk
-      return [m.name, m.surgeName, m.category, m.link, m.content]
-        .some((value) => String(value ?? "").toLowerCase().includes(searchKey))
+      const source = m.isRemoteOnly ? "Surge API 模块" : m.link ? "远程源模块" : "本地模块"
+      const sourceOk = sourceFilter === "全部" || source === sourceFilter
+      if (!catOk || !dirOk || !sourceOk) return false
+      if (!searchKey) return true
+      const metadata = metadataFor(m)
+      return [
+        m.name, m.surgeName, m.category, category, m.link, m.content,
+        metadata.description, metadata.author, metadata.homepage,
+        metadata.tags.join(" "), metadata.notes,
+      ].some((value) => String(value ?? "").toLowerCase().includes(searchKey))
     })
-  }, [modules, filterCategory, filterDir, searchKey, baseDir])
+  }, [modules, filterCategory, filterDir, sourceFilter, searchKey, baseDir, metadataVersion])
   const selectedModules = filteredModules.filter((m) => selectedKeys.has(moduleKey(m)))
   const selectedLocalModules = selectedModules.filter((m) => !m.isRemoteOnly)
+  const selectedRemoteModules = selectedModules.filter((m) => remoteConnected && availableModuleNames.has(getModuleRemoteName(m)))
   const selectedDownloadableCount = selectedLocalModules.filter((m) => !!m.link).length
-  const selectedRemoteCount = selectedModules.length
+  const selectedRemoteCount = selectedRemoteModules.length
   const hasDownloadableFiltered = filteredModules.some((m) => !m.isRemoteOnly && !!m.link)
-  const remoteControlReady = !!String(cfg.remotePort ?? "").trim()
+  const remoteControlReady = remoteConnected && !!getRemoteBaseURL(cfg)
   const enabledRemoteCount = useMemo(
-    () => modules.filter((m) => enabledModuleNames.has(getModuleRemoteName(m))).length,
-    [modules, enabledModuleNames],
+    () => modules.filter((m) => availableModuleNames.has(getModuleRemoteName(m)) && enabledModuleNames.has(getModuleRemoteName(m))).length,
+    [modules, availableModuleNames, enabledModuleNames],
   )
 
   function persistModuleCategory(category?: string) {
@@ -531,13 +564,24 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     }
 
     let remoteNames: string[] = []
-    try {
-      const snapshot = await fetchRemoteModuleSnapshot(loadConfig())
-      remoteNames = snapshot.available
-      setEnabledModuleNames(snapshot.enabled)
-    } catch (e: any) {
+    const remoteCfg = loadConfig()
+    if (!getRemoteBaseURL(remoteCfg)) {
+      setAvailableModuleNames(new Set())
       setEnabledModuleNames(new Set())
-      remoteError = `远程模块读取失败：${String(e?.message ?? e)}`
+      setRemoteConnected(false)
+    } else {
+      try {
+        const snapshot = await fetchRemoteModuleSnapshot(remoteCfg)
+        remoteNames = snapshot.available
+        setAvailableModuleNames(new Set(snapshot.available))
+        setEnabledModuleNames(snapshot.enabled)
+        setRemoteConnected(true)
+      } catch (e: any) {
+        setRemoteConnected(false)
+        setEnabledModuleNames(new Set())
+        remoteNames = Array.from(availableModuleNames)
+        remoteError = `远程模块读取失败：${String(e?.message ?? e)}`
+      }
     }
 
     const localByRemoteName = new Set(localModules.map((m) => getModuleRemoteName(m)))
@@ -574,10 +618,6 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }, [props.refreshToken])
 
   useEffect(() => {
-    void refreshRemoteModules(true, loadConfig())
-  }, [])
-
-  useEffect(() => {
     if (!searchKey || contentIndexLoaded || !modules.length) return
     void refreshModules(false, true)
   }, [searchKey, contentIndexLoaded, modules.length])
@@ -589,8 +629,8 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }, [dirOptions, filterDir])
 
   useEffect(() => {
-    if (filterCategory === "全部") return
-    if (!categories.includes(filterCategory)) {
+    if (filterCategory === "全部" || filterCategory === "未分类") return
+    if (!categoryOptions.includes(filterCategory)) {
       setFilterCategory("全部")
     }
   }, [categories, filterCategory])
@@ -659,6 +699,29 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
       }
       return next
     })
+  }
+
+  async function exportManagementManifest() {
+    try {
+      const manifest = buildModuleManifest(modules, baseDir, availableModuleNames, enabledModuleNames)
+      const path = await exportModuleManifest(manifest)
+      await Dialog.alert({ message: `已导出 ${manifest.modules.length} 个模块的管理清单\n${path}` })
+    } catch (e: any) {
+      if (String(e?.message ?? e) !== "未选择导出位置") {
+        await Dialog.alert({ title: "导出清单失败", message: String(e?.message ?? e) })
+      }
+    }
+  }
+
+  async function shareManagementManifest() {
+    try {
+      const manifest = buildModuleManifest(modules, baseDir, availableModuleNames, enabledModuleNames)
+      const shareSheet: any = (globalThis as any).ShareSheet
+      if (typeof shareSheet?.present !== "function") throw new Error("当前 Scripting 不支持分享")
+      await shareSheet.present([manifestText(manifest)])
+    } catch (e: any) {
+      await Dialog.alert({ title: "分享清单失败", message: String(e?.message ?? e) })
+    }
   }
 
   async function shareSelectedModules() {
@@ -755,14 +818,18 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   }
 
   async function refreshRemoteModules(silent = false, nextCfg: AppConfig = cfg) {
-    if (!String(nextCfg.remotePort ?? "").trim()) {
+    if (!getRemoteBaseURL(nextCfg)) {
+      setAvailableModuleNames(new Set())
       setEnabledModuleNames(new Set())
+      setRemoteConnected(false)
       setModules((current) => current.filter((m) => !m.isRemoteOnly))
       return
     }
     try {
       const snapshot = await fetchRemoteModuleSnapshot(nextCfg)
+      setAvailableModuleNames(new Set(snapshot.available))
       setEnabledModuleNames(snapshot.enabled)
+      setRemoteConnected(true)
       setModules((current) => {
         const local = current.filter((m) => !m.isRemoteOnly)
         const localNames = new Set(local.map((m) => getModuleRemoteName(m)))
@@ -772,8 +839,10 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
         return sortModules([...local, ...remoteOnly])
       })
     } catch (e: any) {
+      // Keep the last known API-only inventory visible while Surge is offline.
+      // The cached names remain non-interactive because remoteConnected is false.
       setEnabledModuleNames(new Set())
-      setModules((current) => current.filter((m) => !m.isRemoteOnly))
+      setRemoteConnected(false)
       if (!silent) setStage(`远程状态获取失败：${String(e?.message ?? e)}`)
     }
   }
@@ -871,6 +940,28 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
       setStage(`添加失败：${String(e?.message ?? e)}`)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function openModuleDetails(target: ModuleInfo) {
+    const metadata = getModuleMetadata(target)
+    const remoteName = getModuleRemoteName(target)
+    const result = await Navigation.present<any>({
+      element: (
+        <ModuleDetailsView
+          module={{ ...target, category: displayCategory(target) }}
+          metadata={metadata}
+          remoteReady={remoteConnected}
+          remoteAvailable={availableModuleNames.has(remoteName)}
+          enabled={enabledModuleNames.has(remoteName)}
+        />
+      ),
+      modalPresentationStyle: "pageSheet",
+    })
+    if (result && typeof result === "object") {
+      saveModuleMetadata(target, result)
+      if (result.category) persistModuleCategory(result.category)
+      setMetadataVersion((value) => value + 1)
     }
   }
 
@@ -1273,8 +1364,8 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
 
   async function toggleRemoteModule(target: ModuleInfo, nextValue: boolean) {
     const remoteName = getModuleRemoteName(target)
-    if (!remoteControlReady) {
-      await Dialog.alert({ message: "请先配置 HTTP 远程控制端口" })
+    if (!remoteControlReady || !availableModuleNames.has(remoteName)) {
+      await Dialog.alert({ message: "Surge 当前没有提供这个模块，无法远程控制" })
       return
     }
     if (!remoteName) {
@@ -1318,15 +1409,15 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
       await Dialog.alert({ message: "请先配置 HTTP 远程控制端口" })
       return
     }
-    if (!selectedModules.length) {
-      await Dialog.alert({ message: "请先选择模块" })
+    if (!selectedRemoteModules.length) {
+      await Dialog.alert({ message: "所选模块中没有可由 Surge API 控制的模块" })
       return
     }
 
     const action = nextValue ? "启用" : "停用"
     const confirmed = await Dialog.confirm({
       title: `批量${action}远程模块`,
-      message: `将通过 Surge HTTP API ${action}已选的 ${selectedModules.length} 个模块？`,
+      message: `将通过 Surge HTTP API ${action}已选的 ${selectedRemoteModules.length} 个模块？`,
     })
     if (!confirmed) return
 
@@ -1337,7 +1428,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
     let completed = 0
     let nextIndex = 0
     try {
-      const total = selectedModules.length
+      const total = selectedRemoteModules.length
       const concurrency = Math.max(1, Math.min(cfg.downloadConcurrency || 3, total))
       const updateProgress = () => {
         setStage(`远程${action}：已完成 ${completed}/${total}`)
@@ -1350,7 +1441,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
           const index = nextIndex
           nextIndex += 1
           if (index >= total) return
-          const target = selectedModules[index]
+          const target = selectedRemoteModules[index]
           const remoteName = getModuleRemoteName(target)
           try {
             await setRemoteModuleEnabled(cfg, remoteName, nextValue)
@@ -1497,7 +1588,7 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
   // an actual category (including 广告) is never hidden behind the overflow
   // control. If a user adds more categories, the selected extra category is
   // shown as the menu label.
-  const chipOptions = categories.slice(0, 4)
+  const chipOptions = categoryOptions.slice(0, 4)
   const categoryMenuLabel = chipOptions.includes(filterCategory) ? "全部" : filterCategory
 
   return (
@@ -1534,6 +1625,13 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                   else setSelectionMode(true)
                 })}
               />
+              <Menu
+                label={<Image systemName="square.and.arrow.up" font={17} />}
+                disabled={busy}
+              >
+                <Button title="导出管理清单" systemImage="doc.text" action={withButtonHaptic(exportManagementManifest)} />
+                <Button title="分享管理清单" systemImage="square.and.arrow.up" action={withButtonHaptic(shareManagementManifest)} />
+              </Menu>
               <Button
                 title=""
                 systemImage="checkmark.shield"
@@ -1639,6 +1737,13 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
               remoteOnly={modules.filter((m) => m.isRemoteOnly).length}
             />
             <HStack spacing={8} frame={{ maxWidth: "infinity" }}>
+              <FilterMenu
+                value={sourceFilter}
+                options={sourceFilterOptions}
+                onSelect={(value) => setSourceFilter(value)}
+              />
+            </HStack>
+            <HStack spacing={8} frame={{ maxWidth: "infinity" }}>
               {chipOptions.map((item, idx) => (
                 <CategoryChip
                   key={`${item}-${idx}`}
@@ -1647,10 +1752,10 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                   onPress={() => setFilterCategory(item)}
                 />
               ))}
-              {filterOptions.length > chipOptions.length ? (
+              {categoryOptions.length > chipOptions.length ? (
                 <FilterMenu
                   value={categoryMenuLabel}
-                  options={filterOptions}
+                  options={categoryOptions}
                   onSelect={(value) => setFilterCategory(value)}
                 />
               ) : null}
@@ -1685,18 +1790,23 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                 return (
                   <VStack
                     key={`${m.name}-${m.link}`}
-                    contextMenu={selectionMode || m.isRemoteOnly ? undefined : {
+                    contextMenu={selectionMode ? undefined : {
                       menuItems: (
                         <Group>
-                          {m.link ? (
-                            <Button title="预览更新" action={withButtonHaptic(() => previewModuleFor(m))} />
-                          ) : null}
-                          <Button title="查看模块" action={withButtonHaptic(() => viewModuleContent(m))} />
-                          <Button title="回滚版本" action={withButtonHaptic(() => restoreModuleFor(m))} />
-                          {m.link ? (
-                            <Button title="复制链接" action={withButtonHaptic(() => copyModuleLink(m))} />
-                          ) : null}
-                          <Button title="删除" role="destructive" action={withButtonHaptic(() => deleteModuleFor(m))} />
+                          <Button title="模块详情" systemImage="info.circle" action={withButtonHaptic(() => openModuleDetails(m))} />
+                          {m.isRemoteOnly ? null : (
+                            <>
+                              {m.link ? (
+                                <Button title="预览更新" action={withButtonHaptic(() => previewModuleFor(m))} />
+                              ) : null}
+                              <Button title="查看模块" action={withButtonHaptic(() => viewModuleContent(m))} />
+                              <Button title="回滚版本" action={withButtonHaptic(() => restoreModuleFor(m))} />
+                              {m.link ? (
+                                <Button title="复制链接" action={withButtonHaptic(() => copyModuleLink(m))} />
+                              ) : null}
+                              <Button title="删除" role="destructive" action={withButtonHaptic(() => deleteModuleFor(m))} />
+                            </>
+                          )}
                         </Group>
                       ),
                     }}
@@ -1730,20 +1840,27 @@ export function HomeView(props: { refreshToken?: number; tag?: number; tabItem?:
                       <VStack alignment="leading" spacing={3}>
                         <Text font="headline">{m.name}</Text>
                         <Text font="caption" foregroundStyle="secondaryLabel">
-                          {m.category ? `${m.category} · ` : ""}{m.isRemoteOnly ? "Surge API 模块" : m.link ? "远程源模块" : "本地模块"}
+                          {displayCategory(m) ? `${displayCategory(m)} · ` : ""}{m.isRemoteOnly ? "Surge API 模块" : m.link ? "远程源模块" : "本地模块"}
                         </Text>
                       </VStack>
                       <Spacer />
                       {!selectionMode ? (
-                        <Toggle
-                          title=""
-                          value={enabledModuleNames.has(remoteName)}
-                          disabled={!remoteControlReady || togglingModuleNames.has(remoteName)}
-                          toggleStyle="switch"
-                          onChanged={(value: boolean) => {
-                            void toggleRemoteModule(m, value)
-                          }}
-                        />
+                        <>
+                          <Button
+                            title=""
+                            systemImage="info.circle"
+                            action={withButtonHaptic(() => openModuleDetails(m))}
+                          />
+                          <Toggle
+                            title=""
+                            value={enabledModuleNames.has(remoteName)}
+                            disabled={!remoteConnected || !availableModuleNames.has(remoteName) || togglingModuleNames.has(remoteName)}
+                            toggleStyle="switch"
+                            onChanged={(value: boolean) => {
+                              void toggleRemoteModule(m, value)
+                            }}
+                          />
+                        </>
                       ) : null}
                     </HStack>
                   </VStack>
