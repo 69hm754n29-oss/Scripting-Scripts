@@ -1,6 +1,6 @@
 import type { ShortcutParameter } from "scripting"
 
-import { loadConfig } from "./config"
+import { loadConfig, persistCategory } from "./config"
 import {
   detectLinkPrefix,
   ensureStorage,
@@ -201,6 +201,13 @@ async function runLocalFileImport(
   )
   if (!result.ok) throw new Error(result.message ?? "本地模块写入失败")
 
+  const saved = await withTimeout(
+    () => loadModuleAtPath(result.path ?? targetPath),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `读取导入结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
+  )
+  if (saved?.category) persistCategory(saved.category)
+
   log(`local import stage: write verified at ${result.path ?? "unknown"}`)
   return {
     text: `Surge 本地模块${existing ? "已覆盖" : "已导入"}：${name}\n写入路径：${result.path ?? "未返回路径"}\n请回到 Surge 刷新或重新启用该本地模块。`,
@@ -260,6 +267,13 @@ async function runScriptHubImport(
     `Script-Hub 导入超时（${IMPORT_TOTAL_TIMEOUT_MS / 1000}s）。可能是 script.hub 未通过 Surge 解析，或 iCloud 目录暂不可写`,
   )
   if (!result.ok) throw new Error(result.message ?? "模块下载失败")
+
+  const saved = await withTimeout(
+    () => loadModuleAtPath(result.path ?? existingPath),
+    IMPORT_STAGE_TIMEOUT_MS,
+    `读取导入结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${request.name}`,
+  )
+  if (saved?.category) persistCategory(saved.category)
 
   const state = sameName ? "已更新" : "已导入"
   log(`import stage: write verified at ${result.path ?? "unknown"}`)

@@ -100,6 +100,10 @@ export function EditModuleView(props: {
     categoryOptions.findIndex((c) => c === (initial?.category ?? ""))
   )
   const [categoryIdx, setCategoryIdx] = useState<number>(initialIdx >= 0 ? initialIdx : 0)
+  const [customCategory, setCustomCategory] = useState<string>(() => {
+    const value = String(initial?.category ?? "").trim()
+    return value && !props.categories.includes(value) ? value : ""
+  })
   const saveDirOptions = useMemo<string[]>(() => {
     const dirs = props.saveDirs ?? []
     if (!dirs.length) return []
@@ -253,7 +257,10 @@ export function EditModuleView(props: {
     const trimmedLink = link.trim()
     const localContent = String(content ?? "")
     const trimmedContent = localContent.trim()
-    const cat = categoryOptions[categoryIdx] === "不设置分类" ? undefined : categoryOptions[categoryIdx]
+    const selectedCategory = categoryOptions[categoryIdx] === "不设置分类"
+      ? ""
+      : categoryOptions[categoryIdx]
+    const cat = customCategory.trim() || selectedCategory || undefined
     const saveDir =
       saveDirOptions.length && saveDirIdx > 0 ? saveDirOptions[saveDirIdx] : undefined
 
@@ -462,6 +469,13 @@ export function EditModuleView(props: {
                 </Text>
               ))}
             </Picker>
+            <TextField
+              label={<Text>自定义分类</Text>}
+              value={customCategory}
+              onChanged={(value: string) => setCustomCategory(value)}
+              prompt="输入后会自动加入分类列表"
+              textFieldStyle="roundedBorder"
+            />
           </Section>
 
           {saveDirOptions.length ? (

@@ -113,3 +113,17 @@ export function addCategory(cfg: AppConfig, name: string): AppConfig {
   const categories = normalizeCategories([...(cfg.categories ?? []), name])
   return { ...cfg, categories }
 }
+
+/**
+ * Persist a category discovered or entered outside the settings form.
+ * Imports run through a headless Intent path, so they cannot wait for the
+ * settings page's Save button before making a new category available.
+ */
+export function persistCategory(name: string): AppConfig {
+  const category = String(name ?? "").trim()
+  const current = loadConfig()
+  if (!category || current.categories.includes(category)) return current
+  const next = addCategory(current, category)
+  saveConfig(next)
+  return next
+}

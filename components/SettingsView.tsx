@@ -207,8 +207,15 @@ export function SettingsView(props: {
       await Dialog.alert({ message: "分类已存在" })
       return
     }
-    setCfg((c) => addCategory(c, name))
-    await refreshCounts()
+    try {
+      const next = addCategory(cfg, name)
+      setCfg(next)
+      saveConfig(next)
+      props.onDone?.(next)
+      await refreshCounts(next)
+    } catch (e: any) {
+      await Dialog.alert({ title: "保存分类失败", message: String(e?.message ?? e) })
+    }
   }
 
   async function importCategories() {
@@ -232,11 +239,14 @@ export function SettingsView(props: {
       })
       return
     }
-    setCfg((c) => ({ ...c, categories: [...(c.categories ?? []), ...toAdd] }))
+    const next = { ...cfg, categories: [...(cfg.categories ?? []), ...toAdd] }
+    setCfg(next)
+    saveConfig(next)
+    props.onDone?.(next)
     await Dialog.alert({
       message: `导入完成：扫描 ${result.scanned} 个模块文件，新增 ${toAdd.length} 个分类`,
     })
-    await refreshCounts()
+    await refreshCounts(next)
   }
 
   async function editCategory(oldName: string) {
@@ -251,26 +261,40 @@ export function SettingsView(props: {
       await Dialog.alert({ message: "分类已存在" })
       return
     }
-    setCfg((c) => {
-      const list = (c.categories ?? []).map((n) => (n === oldName ? nextName : n))
-      return { ...c, categories: list }
-    })
-    await renameCategoryInModules(oldName, nextName, cfg.baseDir)
-    await refreshCounts()
+    try {
+      await renameCategoryInModules(oldName, nextName, cfg.baseDir)
+      const next = {
+        ...cfg,
+        categories: (cfg.categories ?? []).map((n) => (n === oldName ? nextName : n)),
+      }
+      setCfg(next)
+      saveConfig(next)
+      props.onDone?.(next)
+      await refreshCounts(next)
+    } catch (e: any) {
+      await Dialog.alert({ title: "保存分类失败", message: String(e?.message ?? e) })
+    }
   }
 
-function deleteCategoryAt(indices: number[]) {
+  function deleteCategoryAt(indices: number[]) {
     if (!indices.length) return
     HapticFeedback.heavyImpact()
-    setCfg((c) => {
-      const next = [...(c.categories ?? [])]
+    const next = (() => {
+      const categories = [...(cfg.categories ?? [])]
       const sorted = [...indices].sort((a, b) => b - a)
       for (const i of sorted) {
-        if (i >= 0 && i < next.length) next.splice(i, 1)
+        if (i >= 0 && i < categories.length) categories.splice(i, 1)
       }
-      return { ...c, categories: next }
-    })
-    void refreshCounts()
+      return { ...cfg, categories }
+    })()
+    try {
+      setCfg(next)
+      saveConfig(next)
+      props.onDone?.(next)
+      void refreshCounts(next)
+    } catch (e: any) {
+      void Dialog.alert({ title: "删除分类失败", message: String(e?.message ?? e) })
+    }
   }
 
   async function saveAndClose() {

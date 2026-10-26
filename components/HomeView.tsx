@@ -37,7 +37,7 @@ import {
   getModulesDirResolved,
   moveModuleFile,
 } from "../utils/storage"
-import { loadConfig, type AppConfig } from "../utils/config"
+import { loadConfig, persistCategory, type AppConfig } from "../utils/config"
 import { downloadModule, previewModuleUpdate, type ModuleUpdatePreview } from "../utils/downloader"
 import { EditModuleView } from "./EditModuleView"
 import { RemoteControlView } from "./RemoteControlView"
@@ -430,6 +430,12 @@ export function HomeView() {
     [modules, enabledModuleNames],
   )
 
+  function persistModuleCategory(category?: string) {
+    const value = String(category ?? "").trim()
+    if (!value || categories.includes(value)) return
+    setCfg(persistCategory(value))
+  }
+
   function moduleKey(m: ModuleInfo): string {
     return m.filePath || `${m.name}-${m.link}`
   }
@@ -690,6 +696,7 @@ export function HomeView() {
     setStage("添加模块中…")
     setProgress(null)
     try {
+      persistModuleCategory(info.category)
       if (info.isLocal) {
         setStage(`保存模块：${info.name}`)
         await saveLocalModule(info, info.content ?? "")
@@ -754,6 +761,7 @@ export function HomeView() {
     setStage("修改模块中…")
     setProgress(null)
     try {
+      persistModuleCategory(merged.category)
       const finalName = merged.name || target.name
       const finalSaveDir = merged.saveDir ?? originalSaveDir
       const needMove =
