@@ -1,4 +1,7 @@
 import type { AppConfig } from "./config"
+import { withTimeout } from "./async"
+
+const REMOTE_REQUEST_TIMEOUT_MS = 8 * 1000
 
 export function getRemoteBaseURL(cfg: AppConfig): string {
   const host = String(cfg.remoteHost ?? "http://127.0.0.1").trim() || "http://127.0.0.1"
@@ -39,10 +42,14 @@ export async function fetchEnabledModuleNames(cfg: AppConfig): Promise<Set<strin
   const fetchFn: any = (globalThis as any).fetch
   if (typeof fetchFn !== "function") throw new Error("fetch 不可用")
 
-  const res = await fetchFn(`${baseURL}/v1/modules`, {
-    method: "GET",
-    headers: remoteHeaders(cfg),
-  })
+  const res = await withTimeout(
+    () => fetchFn(`${baseURL}/v1/modules`, {
+      method: "GET",
+      headers: remoteHeaders(cfg),
+    }),
+    REMOTE_REQUEST_TIMEOUT_MS,
+    `远程状态请求超时（${REMOTE_REQUEST_TIMEOUT_MS / 1000}s）`,
+  )
   if (!res?.ok) throw new Error(`请求失败：${res?.status ?? "unknown"}`)
   const data = await res.json()
   return parseEnabledNames(data)
@@ -58,10 +65,14 @@ export async function setRemoteModuleEnabled(
   const fetchFn: any = (globalThis as any).fetch
   if (typeof fetchFn !== "function") throw new Error("fetch 不可用")
 
-  const res = await fetchFn(`${baseURL}/v1/modules`, {
-    method: "POST",
-    headers: remoteHeaders(cfg),
-    body: JSON.stringify({ [moduleName]: enabled }),
-  })
+  const res = await withTimeout(
+    () => fetchFn(`${baseURL}/v1/modules`, {
+      method: "POST",
+      headers: remoteHeaders(cfg),
+      body: JSON.stringify({ [moduleName]: enabled }),
+    }),
+    REMOTE_REQUEST_TIMEOUT_MS,
+    `远程开关请求超时（${REMOTE_REQUEST_TIMEOUT_MS / 1000}s）`,
+  )
   if (!res?.ok) throw new Error(`请求失败：${res?.status ?? "unknown"}`)
 }

@@ -196,6 +196,100 @@ function BatchCompactButton(props: {
   )
 }
 
+function CategoryChip(props: {
+  title: string
+  selected: boolean
+  onPress: () => void
+}) {
+  return (
+    <Button
+      title={props.title}
+      action={() => {
+        HapticFeedback.mediumImpact()
+        props.onPress()
+      }}
+      buttonStyle="glass"
+      buttonBorderShape="roundedRectangle"
+      tint={props.selected ? "systemBlue" : "systemGray"}
+      frame={{ minWidth: 54, minHeight: 34 }}
+    />
+  )
+}
+
+function ModuleSummaryCard(props: {
+  total: number
+  visible: number
+  enabled: number
+  remoteReady: boolean
+}) {
+  const visibleText = props.visible === props.total
+    ? "全部显示"
+    : `当前显示 ${props.visible} 个`
+  const stateText = props.remoteReady
+    ? `远程已启用 ${props.enabled}/${props.total}`
+    : "未配置远程控制"
+
+  return (
+    <VStack
+      spacing={10}
+      padding={{ top: 14, bottom: 14, leading: 16, trailing: 16 }}
+      frame={{ maxWidth: "infinity", alignment: "leading" }}
+      glassEffect={{ type: "rect", cornerRadius: 24 } as any}
+      listRowBackground={<EmptyView />}
+      listRowSeparator="hidden"
+    >
+      <HStack spacing={12}>
+        <Image
+          systemName="square.grid.2x2.fill"
+          font={22}
+          foregroundStyle="systemBlue"
+          frame={{ width: 34, height: 34 }}
+        />
+        <VStack alignment="leading" spacing={2}>
+          <Text font="caption" foregroundStyle="secondaryLabel">模块总数</Text>
+          <Text font="title">{String(props.total)}</Text>
+        </VStack>
+        <Spacer />
+        <VStack alignment="trailing" spacing={4}>
+          <Text font="caption" foregroundStyle="secondaryLabel">{visibleText}</Text>
+          <Text font="caption" foregroundStyle={props.remoteReady ? "systemGreen" : "secondaryLabel"}>
+            {stateText}
+          </Text>
+        </VStack>
+      </HStack>
+    </VStack>
+  )
+}
+
+function BottomActionButton(props: {
+  title: string
+  systemImage: string
+  tint: "systemBlue" | "systemGreen"
+  disabled?: boolean
+  onPress: () => void | Promise<void>
+}) {
+  return (
+    <Button
+      action={() => {
+        HapticFeedback.mediumImpact()
+        void props.onPress()
+      }}
+      buttonStyle="glass"
+      buttonBorderShape="roundedRectangle"
+      tint={props.tint}
+      disabled={props.disabled}
+      frame={{ maxWidth: "infinity", minHeight: 48 }}
+      listRowBackground={<EmptyView />}
+      listRowSeparator="hidden"
+    >
+      <HStack spacing={8} frame={{ maxWidth: "infinity", alignment: "center" }}>
+        <Image systemName={props.systemImage} font={16} foregroundStyle={props.tint} />
+        <Text font="headline" foregroundStyle={props.tint}>{props.title}</Text>
+      </HStack>
+    </Button>
+  )
+}
+
 export function HomeView() {
   const releaseNotesSheet = useMarkdownReleaseNotesSheet({
     markdownFile: "changelog.md",
@@ -221,10 +315,11 @@ export function HomeView() {
   const [moveTargets, setMoveTargets] = useState<{ label: string; path: string }[]>([])
   const [lastFailureDetails, setLastFailureDetails] = useState("")
   const [statusCardVisible, setStatusCardVisible] = useState(false)
+  const [contentIndexLoaded, setContentIndexLoaded] = useState(false)
   const [enabledModuleNames, setEnabledModuleNames] = useState<Set<string>>(new Set())
   const [togglingModuleNames, setTogglingModuleNames] = useState<Set<string>>(new Set())
   const categories = cfg.categories ?? []
-  const filterOptions = ["全部", ...categories]
+  const filterOptions = useMemo(() => ["全部", ...categories], [categories])
   const baseDir = resolvedBaseDir || cfg.baseDir
   const dirOptions = useMemo(() => {
     const set = new Set<string>()
@@ -246,32 +341,25 @@ export function HomeView() {
     return rel.includes("/") ? rel.split("/")[0] : ""
   }
 
-  function matchFilters(m: ModuleInfo): boolean {
-    const catOk = filterCategory === "全部" ? true : m.category === filterCategory
-    const dirOk = filterDir === "全部" ? true : getTopDir(m) === filterDir
-    return catOk && dirOk
-  }
-
-  function matchSearch(m: ModuleInfo): boolean {
-    const key = searchText.trim().toLowerCase()
-    if (!key) return true
-    return [
-      m.name,
-      m.surgeName,
-      m.category,
-      m.link,
-      m.content,
-    ].some((value) => String(value ?? "").toLowerCase().includes(key))
-  }
-
-  const filteredModules = modules.filter((m) => {
-    return matchFilters(m) && matchSearch(m)
-  })
+  const searchKey = searchText.trim().toLowerCase()
+  const filteredModules = useMemo(() => {
+    return modules.filter((m) => {
+      const catOk = filterCategory === "全部" ? true : m.category === filterCategory
+      const dirOk = filterDir === "全部" ? true : getTopDir(m) === filterDir
+      if (!catOk || !dirOk || !searchKey) return catOk && dirOk
+      return [m.name, m.surgeName, m.category, m.link, m.content]
+        .some((value) => String(value ?? "").toLowerCase().includes(searchKey))
+    })
+  }, [modules, filterCategory, filterDir, searchKey, baseDir])
   const selectedModules = filteredModules.filter((m) => selectedKeys.has(moduleKey(m)))
   const selectedDownloadableCount = selectedModules.filter((m) => !!m.link).length
   const onlyLocalFiltered =
     filteredModules.length > 0 && filteredModules.every((m) => m.isLocal || !m.link)
   const remoteControlReady = !!String(cfg.remotePort ?? "").trim()
+  const enabledRemoteCount = useMemo(
+    () => modules.filter((m) => enabledModuleNames.has(getModuleRemoteName(m))).length,
+    [modules, enabledModuleNames],
+  )
 
   function moduleKey(m: ModuleInfo): string {
     return m.filePath || `${m.name}-${m.link}`
@@ -288,13 +376,17 @@ export function HomeView() {
     return idx > 0 ? String(m.filePath).slice(0, idx) : undefined
   }
 
-  async function refreshModules(resetStageOnSuccess = false) {
+  async function refreshModules(
+    resetStageOnSuccess = false,
+    includeContent = false,
+  ): Promise<boolean> {
     try {
       await ensureStorage()
       const resolved = await getModulesDirResolved()
       setResolvedBaseDir(resolved)
-      const list = sortModules(await loadModules())
+      const list = sortModules(await loadModules(resolved, includeContent))
       setModules(list)
+      setContentIndexLoaded(includeContent)
       try {
         const subDirs = await listDirectSubDirs(resolved)
         setMoveTargets([
@@ -308,15 +400,18 @@ export function HomeView() {
         setStage("就绪")
         setProgress(null)
       }
+      return true
     } catch (e: any) {
       setModules([])
       setMoveTargets([])
+      setContentIndexLoaded(false)
       setStage(String(e?.message ?? e))
+      return false
     }
   }
 
   async function syncMetadataIfNeeded() {
-    await autoExportMetadataToICloud(loadConfig())
+    await autoExportMetadataToICloud(cfg)
   }
 
   useEffect(() => {
@@ -324,8 +419,13 @@ export function HomeView() {
   }, [])
 
   useEffect(() => {
-    void refreshRemoteModules(true)
-  }, [cfg.remotePort, cfg.remotePassword])
+    void refreshRemoteModules(true, loadConfig())
+  }, [])
+
+  useEffect(() => {
+    if (!searchKey || contentIndexLoaded || !modules.length) return
+    void refreshModules(false, true)
+  }, [searchKey, contentIndexLoaded, modules.length])
 
   useEffect(() => {
     if (filterDir !== "全部" && !dirOptions.includes(filterDir)) {
@@ -354,6 +454,15 @@ export function HomeView() {
 
     return () => clearTimeout(timer)
   }, [stage, progress, lastFailureDetails])
+
+  useEffect(() => {
+    const validKeys = new Set(modules.map((m) => moduleKey(m)))
+    setSelectedKeys((previous) => {
+      const next = new Set(Array.from(previous).filter((key) => validKeys.has(key)))
+      if (next.size === previous.size) return previous
+      return next
+    })
+  }, [modules])
 
   function toggleSelection(target: ModuleInfo) {
     const key = moduleKey(target)
@@ -404,7 +513,6 @@ export function HomeView() {
           initial={loadConfig()}
           onDone={(next) => {
             setCfg(next)
-            void refreshModules(true)
           }}
         />
       ),
@@ -420,7 +528,6 @@ export function HomeView() {
           initial={loadConfig()}
           onDone={(next) => {
             setCfg(next)
-            void refreshRemoteModules(true, next)
           }}
         />
       ),
@@ -444,6 +551,19 @@ export function HomeView() {
     }
   }
 
+  async function refreshAll() {
+    if (busy) return
+    setBusy(true)
+    setLastFailureDetails("")
+    setStage("刷新模块列表…")
+    try {
+      const ok = await refreshModules(true)
+      if (ok) await refreshRemoteModules(false, loadConfig())
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function addModule() {
     if (!categories.length) {
       await Dialog.alert({ message: "请先在设置页添加分类" })
@@ -455,7 +575,7 @@ export function HomeView() {
     })
     if (!info) return
 
-    const current = await loadModules()
+    const current = modules
     const nameExists = current.some((m) => m.name === info.name)
     const linkExists = info.link ? current.some((m) => m.link === info.link) : false
     if (nameExists) {
@@ -495,7 +615,7 @@ export function HomeView() {
   }
 
   async function modifyModuleFor(target: ModuleInfo) {
-    const current = await loadModules()
+    const current = modules
     const subDirs = await listDirectSubDirs()
     const originalSaveDir = inferSaveDir(target)
     const updated = await Navigation.present<ModuleInfo>({
@@ -513,7 +633,6 @@ export function HomeView() {
     const idx = current.findIndex((m) => m.name === target.name && m.link === target.link)
     if (idx < 0) return
 
-    const next = [...current]
     const merged: ModuleInfo = { ...target, ...updated }
 
     if (merged.name) {
@@ -536,7 +655,6 @@ export function HomeView() {
     setStage("修改模块中…")
     setProgress(null)
     try {
-      next[idx] = merged
       const finalName = merged.name || target.name
       const finalSaveDir = merged.saveDir ?? originalSaveDir
       const needMove =
@@ -715,13 +833,7 @@ export function HomeView() {
   }
 
   async function downloadAll() {
-    const current = await loadModules()
-    const list = current.filter((m) => {
-      const catOk = filterCategory === "全部" ? true : m.category === filterCategory
-      const dirOk = filterDir === "全部" ? true : getTopDir(m) === filterDir
-      return catOk && dirOk && matchSearch(m)
-    })
-    await downloadBatch(list, "下载全部模块…")
+    await downloadBatch(filteredModules, "下载全部模块…")
   }
 
   async function downloadSelected() {
@@ -924,8 +1036,12 @@ export function HomeView() {
 
   const showStatusPanel = statusCardVisible && (stage !== "就绪" || progress !== null || !!lastFailureDetails)
   const showTopCard = showStatusPanel || selectionMode
-  const showSearchPanel = searchVisible || !!searchText.trim()
+  const showSearchPanel = searchVisible || !!searchKey
   const showTopInset = showSearchPanel || showTopCard
+  // Keep the quick filters on one line on narrow iPhone screens. The full
+  // category list remains available from the overflow menu.
+  const chipOptions = filterOptions.length > 4 ? filterOptions.slice(0, 3) : filterOptions
+  const categoryMenuLabel = chipOptions.includes(filterCategory) ? "更多" : filterCategory
 
   return (
     <NavigationStack>
@@ -982,7 +1098,7 @@ export function HomeView() {
                         title="搜索"
                         value={searchText}
                         onChanged={(value: string) => setSearchText(value)}
-                        prompt="搜索模块名称或内容"
+                        prompt="搜索名称、链接或内容"
                       />
                       {searchText.trim() ? (
                         <Button
@@ -1010,47 +1126,73 @@ export function HomeView() {
             ),
           },
           bottom: {
-            alignment: "trailing",
+            alignment: "center",
             spacing: 0,
             content: (
-              selectionMode ? <VStack /> : <VStack spacing={18} padding={{ bottom: 18, trailing: 16 }}>
-                <Button
-                  action={withButtonHaptic(addModule)}
-                  buttonStyle="glass"
-                  buttonBorderShape="circle"
-                  controlSize="extraLarge"
-                  tint="systemBlue"
-                  disabled={busy}
-                  frame={{ width: 76, height: 76 }}
+              selectionMode ? <VStack /> : (
+                <HStack
+                  spacing={10}
+                  padding={{ top: 8, bottom: 12, leading: 16, trailing: 16 }}
+                  frame={{ maxWidth: "infinity" }}
                 >
-                  <VStack frame={{ width: 56, height: 56, alignment: "center" }}>
-                    <Image systemName="plus" font={30} foregroundStyle="systemBlue" />
-                  </VStack>
-                </Button>
-                <Button
-                  action={withButtonHaptic(downloadAll)}
-                  buttonStyle="glass"
-                  buttonBorderShape="circle"
-                  controlSize="extraLarge"
-                  tint="systemGreen"
-                  disabled={busy || onlyLocalFiltered}
-                  frame={{ width: 76, height: 76 }}
-                >
-                  <VStack frame={{ width: 56, height: 56, alignment: "center" }}>
-                    <Image systemName="arrow.triangle.2.circlepath" font={28} foregroundStyle="systemGreen" />
-                  </VStack>
-                </Button>
-              </VStack>
+                  <BottomActionButton
+                    title="添加模块"
+                    systemImage="plus"
+                    tint="systemBlue"
+                    disabled={busy}
+                    onPress={addModule}
+                  />
+                  <BottomActionButton
+                    title="刷新"
+                    systemImage="arrow.triangle.2.circlepath"
+                    tint="systemGreen"
+                    disabled={busy || onlyLocalFiltered}
+                    onPress={refreshAll}
+                  />
+                </HStack>
+              )
             ),
           },
         }}
       >
+        <Section>
+          <VStack
+            spacing={12}
+            frame={{ maxWidth: "infinity", alignment: "leading" }}
+            listRowBackground={<EmptyView />}
+            listRowSeparator="hidden"
+          >
+            <ModuleSummaryCard
+              total={modules.length}
+              visible={filteredModules.length}
+              enabled={enabledRemoteCount}
+              remoteReady={remoteControlReady}
+            />
+            <HStack spacing={8} frame={{ maxWidth: "infinity" }}>
+              {chipOptions.map((item, idx) => (
+                <CategoryChip
+                  key={`${item}-${idx}`}
+                  title={item}
+                  selected={filterCategory === item}
+                  onPress={() => setFilterCategory(item)}
+                />
+              ))}
+              {filterOptions.length > chipOptions.length ? (
+                <FilterMenu
+                  value={categoryMenuLabel}
+                  options={filterOptions}
+                  onSelect={(value) => setFilterCategory(value)}
+                />
+              ) : null}
+            </HStack>
+          </VStack>
+        </Section>
         <Section
           header={(
             <HStack frame={{ maxWidth: "infinity" }}>
               <Text lineLimit={1} truncationMode="tail" layoutPriority={1}>
                 {filteredModules.length > 0
-                  ? `模块列表(${filteredModules.length})`
+                  ? `模块列表 (${filteredModules.length})`
                   : "模块列表"}
               </Text>
               <Spacer />
@@ -1061,11 +1203,6 @@ export function HomeView() {
                   onSelect={(value) => setFilterDir(value)}
                 />
               ) : null}
-              <FilterMenu
-                value={filterCategory}
-                options={filterOptions}
-                onSelect={(value) => setFilterCategory(value)}
-              />
             </HStack>
           )}
         >
@@ -1116,11 +1253,9 @@ export function HomeView() {
                       <ModuleIcon module={m} />
                       <VStack alignment="leading" spacing={3}>
                         <Text font="headline">{m.name}</Text>
-                        {m.category ? (
-                          <Text font="caption" foregroundStyle="secondaryLabel">
-                            {m.category}
-                          </Text>
-                        ) : null}
+                        <Text font="caption" foregroundStyle="secondaryLabel">
+                          {m.category ? `${m.category} · ` : ""}{m.link ? "远程模块" : "本地模块"}
+                        </Text>
                       </VStack>
                       <Spacer />
                       {!selectionMode ? (

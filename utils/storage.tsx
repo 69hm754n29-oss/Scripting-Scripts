@@ -251,14 +251,21 @@ async function listModuleFilesRecursive(dir: string): Promise<string[]> {
   return files
 }
 
-export async function loadModules(): Promise<ModuleInfo[]> {
-  await ensureStorage()
-  const dir = await getModulesDirResolved()
+export async function loadModules(
+  resolvedDir?: string,
+  includeContent = false,
+): Promise<ModuleInfo[]> {
+  // Callers that already resolved and authorized the bookmark can pass the
+  // directory through. This avoids repeating the security-scoped bookmark
+  // lookup during a single refresh.
+  if (!resolvedDir) await ensureStorage()
+  const dir = resolvedDir || await getModulesDirResolved()
 
   const modules: ModuleInfo[] = []
   const files = await listModuleFilesRecursive(dir)
+  const prefixes = getLinkPrefixes()
   for (const path of files) {
-    const item = await readModuleInfo(path)
+    const item = await readModuleInfo(path, prefixes, includeContent)
     if (item) modules.push(item)
   }
   return modules
@@ -269,9 +276,12 @@ export function moduleFilePath(moduleName: string, dir?: string): string {
   return Path.join(base, `${moduleName}.sgmodule`)
 }
 
-async function readModuleInfo(path: string): Promise<ModuleInfo | null> {
+async function readModuleInfo(
+  path: string,
+  prefixes = getLinkPrefixes(),
+  includeContent = false,
+): Promise<ModuleInfo | null> {
   const fm = fmOrThrow()
-  if (!(await exists(path))) return null
 
   const name = extractNameFromPath(path)
   if (!name) return null
@@ -283,7 +293,7 @@ async function readModuleInfo(path: string): Promise<ModuleInfo | null> {
     text = ""
   }
 
-  const link = parseLinkFromContent(text, getLinkPrefixes())
+  const link = parseLinkFromContent(text, prefixes)
   const localTag = parseTag(text, "local")
   const hasLocalTag =
     localTag != null &&
@@ -293,7 +303,16 @@ async function readModuleInfo(path: string): Promise<ModuleInfo | null> {
   const category = parseTag(text, "category") ?? parseTag(text, "cagegory") ?? undefined
   const surgeName = parseTag(text, "name") ?? undefined
   const icon = parseTag(text, "icon") ?? parseIcon(text)
-  return { name, link, surgeName, category, icon, filePath: path, isLocal, content: text }
+  return {
+    name,
+    link,
+    surgeName,
+    category,
+    icon,
+    filePath: path,
+    isLocal,
+    ...(includeContent ? { content: text } : {}),
+  }
 }
 
 /**
@@ -302,6 +321,7 @@ async function readModuleInfo(path: string): Promise<ModuleInfo | null> {
  * iCloud directory walk can block an Intent for a long time.
  */
 export async function loadModuleAtPath(path: string): Promise<ModuleInfo | null> {
+  if (!(await exists(path))) return null
   return readModuleInfo(path)
 }
 
