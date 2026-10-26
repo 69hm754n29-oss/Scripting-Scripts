@@ -1,5 +1,11 @@
 # 更新日志
 
+## v4.1.1
+
+- Shortcuts/分享链接现在会直接打开 Script-Hub 页面，自动填入来源并读取内容识别格式，不再默认后台转换后退出。
+- Script-Hub 页面首次打开时会识别剪贴板中的 HTTPS 来源链接或模块/脚本文本，自动填入、识别并收起键盘。
+- 修正 .snippet 误判规则集：QX snippet 中包含 DOMAIN/IP 规则行时仍按 QX 重写处理。
+
 ## v4.1.0
 
 - 修正来源格式语义：`.snippet` 按 Quantumult X 重写处理，独立 `.js` 按脚本源处理。

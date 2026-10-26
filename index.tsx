@@ -1,5 +1,5 @@
 import { Intent, Navigation, Script } from "scripting"
-import { runShortcutUpdate } from "./utils/shortcut_update"
+import { getSharedSourceRequest, runShortcutUpdate } from "./utils/shortcut_update"
 import { isScriptHubImport, resolveScriptHubQueryParameters } from "./utils/deep_link_import"
 import { getIntentFileURLs } from "./utils/intent_input"
 
@@ -21,13 +21,33 @@ function incomingQueryParameters(direct: Record<string, any> | null | undefined)
   ])
 }
 
+function incomingSharedSource(queryParameters: Record<string, any> | null | undefined) {
+  return getSharedSourceRequest({
+    shortcutParameter: Intent.shortcutParameter,
+    urlsParameter: Intent.urlsParameter,
+    textsParameter: Intent.textsParameter,
+    queryParameters,
+  })
+}
+
+async function presentSharedSource(queryParameters: Record<string, any> | null | undefined): Promise<boolean> {
+  const shared = incomingSharedSource(queryParameters)
+  const fileURLs = getIntentFileURLs(Intent as any)
+  if (!shared || fileURLs.length || isScriptHubImport(queryParameters)) return false
+  const { AppView } = await import("./components/AppView")
+  await Navigation.present({
+    element: <AppView initialTab={1} initialInput={shared} />,
+  })
+  return true
+}
+
 async function runExternalInput(queryParameters: Record<string, any> | null | undefined): Promise<boolean> {
   const isImportRequest = isScriptHubImport(queryParameters)
   if (!isImportRequest && !hasShortcutInput()) return false
 
-  // A run_single launch must have exactly one owner. In particular, do not
-  // let an external re-trigger start a second downloader while the first one
-  // is waiting for iCloud or the network.
+  // A background run_single launch must have exactly one owner. In particular,
+  // do not let an external re-trigger start a second downloader while the
+  // first one is waiting for iCloud or the network.
   if (externalInputStarted) {
     console.log("[Surge模块管理][Intent] duplicate external input ignored")
     return true
@@ -70,7 +90,12 @@ async function run() {
   console.log(
     `[Surge模块管理][Intent] cold start env=${Script.env} query=${Object.keys(Script.queryParameters ?? {}).join(",") || "none"}`,
   )
-  if (await runExternalInput(incomingQueryParameters(Script.queryParameters))) return
+  const queryParameters = incomingQueryParameters(Script.queryParameters)
+  if (await presentSharedSource(queryParameters)) {
+    Script.exit()
+    return
+  }
+  if (await runExternalInput(queryParameters)) return
 
   // Plain `scripting://run/...` can resume an already visible app UI. Keep a
   // listener only for that long-lived UI path.

@@ -36,7 +36,7 @@ type ShortcutOptions = {
   names?: string[]
 }
 
-type SharedSourceRequest = {
+export type SharedSourceRequest = {
   sourceURL: string
   name?: string
   filename?: string
@@ -225,6 +225,15 @@ function sharedSourceRequest(input: ShortcutUpdateInput): SharedSourceRequest | 
     if (request) return request
   }
   return null
+}
+
+/**
+ * Return a source shared from Shortcuts/Intent without starting the headless
+ * conversion path. The UI entry point uses this to prefill Script-Hub, while
+ * the same parser remains the single source of truth for background imports.
+ */
+export function getSharedSourceRequest(input: ShortcutUpdateInput): SharedSourceRequest | null {
+  return sharedSourceRequest(input)
 }
 
 async function runSharedSourceConversion(

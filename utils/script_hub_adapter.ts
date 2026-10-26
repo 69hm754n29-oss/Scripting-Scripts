@@ -166,20 +166,28 @@ export function detectScriptHubSourceFormat(
   content?: unknown,
 ): ScriptHubFormatDetection {
   const fallback = sourceFormatFromPath(value)
+  const pathWithoutQuery = String(value ?? "").split(/[?#]/, 1)[0].toLowerCase()
+  const isQXSnippet = /\.snippet$/.test(pathWithoutQuery)
   const text = normalizedSourceContent(content)
 
   if (text) {
-    if (looksLikeRuleSet(text)) {
-      return { sourceFormat: "rule-set", confidence: "high", reason: "检测到规则集条目" }
-    }
     if (looksLikeSurgeModule(text)) {
       return { sourceFormat: "surge-module", confidence: "high", reason: "检测到 Surge 模块段落或脚本参数" }
+    }
+    // QX snippet collections often contain DOMAIN/IP rules inside rewrite
+    // blocks. Do not let the generic rule-line detector reclassify an
+    // explicitly named snippet source as a standalone rule set.
+    if (isQXSnippet && (fallback === "qx-rewrite" || looksLikeQXRewrite(text))) {
+      return { sourceFormat: "qx-rewrite", confidence: "high", reason: "检测到 .snippet 来源，按 Quantumult X 重写处理" }
     }
     if (looksLikeLoonPlugin(text)) {
       return { sourceFormat: "loon-plugin", confidence: "high", reason: "检测到 Loon 插件脚本语法" }
     }
     if (looksLikeQXRewrite(text)) {
       return { sourceFormat: "qx-rewrite", confidence: "high", reason: "检测到 Quantumult X 重写语法" }
+    }
+    if (looksLikeRuleSet(text)) {
+      return { sourceFormat: "rule-set", confidence: "high", reason: "检测到规则集条目" }
     }
     // A JavaScript-looking source with a `.js`/`.script` path is an explicit
     // script source. Script-Hub can still convert it to a module, so the
