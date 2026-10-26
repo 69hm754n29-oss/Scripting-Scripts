@@ -1,5 +1,6 @@
 import {
   Button,
+  DisclosureGroup,
   Form,
   HStack,
   Image,
@@ -49,6 +50,7 @@ function SourceActionButton(props: {
   title: string
   systemImage: string
   tint: "systemBlue" | "systemGreen" | "systemPurple" | "systemOrange"
+  fullWidth?: boolean
   disabled?: boolean
   onPress: () => void | Promise<void>
 }) {
@@ -57,14 +59,24 @@ function SourceActionButton(props: {
       title={props.title}
       systemImage={props.systemImage}
       buttonStyle="borderedProminent"
+      controlSize="small"
       tint={props.tint}
       disabled={props.disabled}
+      frame={props.fullWidth ? { maxWidth: "infinity" } : undefined}
       action={() => {
+        hideKeyboard()
         HapticFeedback.mediumImpact()
         void props.onPress()
       }}
     />
   )
+}
+
+function hideKeyboard(): void {
+  try {
+    const keyboard = (globalThis as any).Keyboard
+    keyboard?.hide?.()
+  } catch {}
 }
 
 function sourceSubtitle(source: SourceConfig): string {
@@ -105,6 +117,8 @@ export function SourceManagementView(props: {
   const [removeSourceMetadata, setRemoveSourceMetadata] = useState(true)
   const [enableJQ, setEnableJQ] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [sourceSettingsExpanded, setSourceSettingsExpanded] = useState(true)
+  const [conversionSettingsExpanded, setConversionSettingsExpanded] = useState(true)
 
   const categoryOptions = useMemo(() => ["不设置分类", ...props.categories], [props.categories])
   const saveDirOptions = useMemo(() => ["根目录", ...props.saveDirs], [props.saveDirs])
@@ -113,6 +127,24 @@ export function SourceManagementView(props: {
   )
   const selectedSaveDir = saveDirIdx > 0 ? props.saveDirs[saveDirIdx - 1] : undefined
   const targetCanWriteToSurge = targetFormat === "surge-module"
+
+  function buildConversionURLFor(
+    rawSourceURL: string,
+    rawSourceFormat: ScriptHubSourceFormat = sourceFormat,
+    rawModuleName = moduleName,
+  ): string {
+    const normalized = normalizeSourceURL(rawSourceURL.trim())
+    return buildScriptHubConversionURL({
+      sourceURL: normalized,
+      sourceFormat: rawSourceFormat,
+      targetFormat,
+      moduleName: rawModuleName.trim() || deriveModuleNameFromSource(normalized),
+      category: selectedCategory,
+      sourceUserAgent,
+      removeSourceMetadata,
+      enableJQ,
+    })
+  }
 
   const conversionResult = useMemo(() => {
     const raw = sourceURL.trim()
@@ -123,18 +155,8 @@ export function SourceManagementView(props: {
       }
     }
     try {
-      const normalized = normalizeSourceURL(raw)
       return {
-        url: buildScriptHubConversionURL({
-          sourceURL: normalized,
-          sourceFormat,
-          targetFormat,
-          moduleName: moduleName.trim() || deriveModuleNameFromSource(normalized),
-          category: selectedCategory,
-          sourceUserAgent,
-          removeSourceMetadata,
-          enableJQ,
-        }),
+        url: buildConversionURLFor(raw),
         error: "",
       }
     } catch (e: any) {
@@ -143,6 +165,7 @@ export function SourceManagementView(props: {
   }, [mode, sourceURL, sourceFormat, targetFormat, moduleName, selectedCategory, sourceUserAgent, removeSourceMetadata, enableJQ])
 
   async function loadMarketplace(path = repositoryPath) {
+    hideKeyboard()
     const rawRepositoryURL = repositoryURL.trim()
     if (!rawRepositoryURL) {
       await Dialog.alert({ message: "请先填写 GitHub 市场仓库地址" })
@@ -166,15 +189,62 @@ export function SourceManagementView(props: {
     }
   }
 
-  function selectCatalogItem(item: GitHubCatalogItem) {
+  async function selectCatalogItem(item: GitHubCatalogItem) {
+    hideKeyboard()
     if (item.kind === "directory") {
-      void loadMarketplace(item.path)
+      await loadMarketplace(item.path)
       return
     }
     if (!item.sourceURL) return
     setSourceURL(item.sourceURL)
-    setModuleName(catalogItemModuleName(item))
-    setSourceFormat(sourceFormatForItem(item))
+    const itemModuleName = catalogItemModuleName(item)
+    const itemSourceFormat = sourceFormatForItem(item)
+    setModuleName(itemModuleName)
+    setSourceFormat(itemSourceFormat)
+
+    let convertedURL = ""
+    try {
+      convertedURL = buildConversionURLFor(item.sourceURL, itemSourceFormat, itemModuleName)
+    } catch (e: any) {
+      await Dialog.alert({ title: "无法生成转换链接", message: String(e?.message ?? e) })
+      return
+    }
+
+    const canImport = targetCanWriteToSurge && autoImport
+    const actions = canImport
+      ? [
+          { label: "转换并导入 Surge" },
+          { label: "复制转换链接" },
+          { label: "复制原始链接" },
+        ]
+      : [
+          { label: "复制转换链接" },
+          { label: "复制原始链接" },
+        ]
+    const selectedAction = await Dialog.actionSheet({
+      title: item.name,
+      message: canImport
+        ? "选择要执行的操作；点空白处或取消可关闭。"
+        : "当前设置只生成转换链接；点空白处或取消可关闭。",
+      cancelButton: true,
+      actions,
+    })
+    if (selectedAction == null) return
+
+    if (canImport && selectedAction === 0) {
+      await importCurrent({
+        sourceURL: item.sourceURL,
+        moduleName: itemModuleName,
+        sourceFormat: itemSourceFormat,
+        conversionURL: convertedURL,
+      })
+      return
+    }
+    const copyConversionIndex = canImport ? 1 : 0
+    await copyValue(
+      selectedAction === copyConversionIndex ? convertedURL : item.sourceURL,
+      selectedAction === copyConversionIndex ? "转换链接" : "原始链接",
+    )
   }
 
   useEffect(() => {
@@ -205,6 +275,8 @@ export function SourceManagementView(props: {
     setEnableJQ(source.enableJQ)
     setCatalogItems([])
     setCatalogError("")
+    setSourceSettingsExpanded(false)
+    setConversionSettingsExpanded(false)
   }, [selectedId, sources, categoryOptions, props.saveDirs])
 
   function resetForm() {
@@ -228,12 +300,20 @@ export function SourceManagementView(props: {
     setKeepOriginalLink(true)
     setRemoveSourceMetadata(true)
     setEnableJQ(true)
+    setSourceSettingsExpanded(true)
+    setConversionSettingsExpanded(true)
   }
 
-  function saveCurrentSource(): SourceConfig | null {
+  function saveCurrentSource(overrides: {
+    sourceURL?: string
+    moduleName?: string
+    sourceFormat?: ScriptHubSourceFormat
+  } = {}): SourceConfig | null {
     const trimmedName = name.trim()
     const trimmedRepositoryURL = repositoryURL.trim()
-    const trimmedURL = sourceURL.trim()
+    const trimmedURL = (overrides.sourceURL ?? sourceURL).trim()
+    const effectiveModuleName = overrides.moduleName ?? moduleName
+    const effectiveSourceFormat = overrides.sourceFormat ?? sourceFormat
     if (!trimmedName) {
       void Dialog.alert({ message: "请填写来源名称" })
       return null
@@ -251,7 +331,7 @@ export function SourceManagementView(props: {
       ? normalizeSourceURL(trimmedRepositoryURL)
       : undefined
     const normalizedURL = normalizeSourceURL(trimmedURL || normalizedRepositoryURL)
-    const normalizedName = normalizeModuleName(moduleName.trim(), normalizedURL)
+    const normalizedName = normalizeModuleName(effectiveModuleName.trim(), normalizedURL)
     const current = selectedId ? sources.find((item) => item.id === selectedId) : undefined
     const next = current
       ? {
@@ -264,7 +344,7 @@ export function SourceManagementView(props: {
           repositoryPath: mode === "marketplace" ? repositoryPath.trim() || undefined : undefined,
           moduleName: normalizedName,
           sourceUserAgent: sourceUserAgent.trim() || undefined,
-          sourceKind: sourceFormat,
+          sourceKind: effectiveSourceFormat,
           target: targetFormat,
           defaultCategory: selectedCategory || undefined,
           saveDir: selectedSaveDir,
@@ -283,7 +363,7 @@ export function SourceManagementView(props: {
           repositoryPath: mode === "marketplace" ? repositoryPath.trim() || undefined : undefined,
           moduleName: normalizedName,
           sourceUserAgent: sourceUserAgent.trim() || undefined,
-          sourceKind: sourceFormat,
+          sourceKind: effectiveSourceFormat,
           target: targetFormat,
           defaultCategory: selectedCategory,
           saveDir: selectedSaveDir,
@@ -299,6 +379,7 @@ export function SourceManagementView(props: {
   }
 
   async function saveSource() {
+    hideKeyboard()
     try {
       if (saveCurrentSource()) await Dialog.alert({ message: "来源设置已保存" })
     } catch (e: any) {
@@ -307,6 +388,7 @@ export function SourceManagementView(props: {
   }
 
   async function copyValue(value: string, title: string) {
+    hideKeyboard()
     if (!value) {
       await Dialog.alert({ message: "请先填写并检查来源地址" })
       return
@@ -319,21 +401,47 @@ export function SourceManagementView(props: {
     }
   }
 
-  async function importCurrent() {
+  async function importCurrent(overrides: {
+    sourceURL?: string
+    moduleName?: string
+    sourceFormat?: ScriptHubSourceFormat
+    conversionURL?: string
+  } = {}) {
+    hideKeyboard()
     if (busy) return
-    const source = saveCurrentSource()
+    const effectiveSourceURL = (overrides.sourceURL ?? sourceURL).trim()
+    const effectiveSourceFormat = overrides.sourceFormat ?? sourceFormat
+    const effectiveModuleName = overrides.moduleName ?? moduleName
+    let effectiveConversionURL = overrides.conversionURL ?? ""
+    if (!effectiveConversionURL && effectiveSourceURL) {
+      try {
+        effectiveConversionURL = buildConversionURLFor(
+          effectiveSourceURL,
+          effectiveSourceFormat,
+          effectiveModuleName,
+        )
+      } catch (e: any) {
+        await Dialog.alert({ title: "无法生成转换链接", message: String(e?.message ?? e) })
+        return
+      }
+    }
+    const source = saveCurrentSource({
+      sourceURL: effectiveSourceURL,
+      moduleName: effectiveModuleName,
+      sourceFormat: effectiveSourceFormat,
+    })
     if (!source) return
     if (!source.enabled) {
       await Dialog.alert({ message: "该来源已停用，请先打开来源开关" })
       return
     }
-    if (!sourceURL.trim() || !conversionResult.url) {
+    if (!effectiveSourceURL || !effectiveConversionURL) {
       await Dialog.alert({ message: conversionResult.error || "请先从市场目录选择一个插件或模块" })
       return
     }
 
     if (!targetCanWriteToSurge || !source.autoImport) {
-      await copyValue(conversionResult.url, "转换链接")
+      await copyValue(effectiveConversionURL, "转换链接")
       await Dialog.alert({
         message: targetCanWriteToSurge
           ? "已保存来源并复制转换链接；当前设置不会自动写入模块目录。"
@@ -346,10 +454,10 @@ export function SourceManagementView(props: {
     try {
       const result = await props.onImport({
         source,
-        moduleName: normalizeModuleName(source.moduleName, sourceURL),
-        sourceURL,
-        convertedURL: conversionResult.url,
-        sourceFormat,
+        moduleName: normalizeModuleName(source.moduleName, effectiveSourceURL),
+        sourceURL: effectiveSourceURL,
+        convertedURL: effectiveConversionURL,
+        sourceFormat: effectiveSourceFormat,
         targetFormat,
         category: selectedCategory || undefined,
         saveDir: selectedSaveDir,
@@ -389,6 +497,7 @@ export function SourceManagementView(props: {
             <Button
               title="新增"
               action={() => {
+                hideKeyboard()
                 HapticFeedback.mediumImpact()
                 resetForm()
               }}
@@ -398,17 +507,30 @@ export function SourceManagementView(props: {
             <Button
               title="保存"
               action={() => {
+                hideKeyboard()
                 HapticFeedback.mediumImpact()
                 void saveSource()
               }}
             />
+          ),
+          keyboard: (
+            <HStack padding={{ top: 6, bottom: 6, leading: 16, trailing: 16 }}>
+              <Text font="caption" foregroundStyle="secondaryLabel">编辑来源</Text>
+              <Spacer />
+              <Button
+                title="收起键盘"
+                systemImage="keyboard.chevron.compact.down"
+                buttonStyle="borderless"
+                action={hideKeyboard}
+              />
+            </HStack>
           ),
         }}
       >
         <Form formStyle="grouped">
           <Section>
             <Text foregroundStyle="secondaryLabel" lineLimit={5}>
-              这里适配的是你主动提供的插件/模块市场目录，不内置站点、不分发站点内容，也不会递归扫描。单个插件或模块请直接在“添加模块”中填写直链；市场来源只在你点击“加载当前目录”或打开目录时请求。
+              这里适配的是你主动提供的插件/模块市场目录，不内置站点、不分发站点内容，也不会递归扫描。单个插件或模块请直接在“添加模块”中填写直链；市场来源只在你点击“加载目录”或打开目录时请求。
             </Text>
           </Section>
 
@@ -455,12 +577,20 @@ export function SourceManagementView(props: {
             </Section>
           ) : null}
 
-          <Section header={<Text>来源设置</Text>}>
+          <DisclosureGroup
+            title="来源设置"
+            isExpanded={sourceSettingsExpanded}
+            onChanged={(expanded: boolean) => {
+              hideKeyboard()
+              setSourceSettingsExpanded(expanded)
+            }}
+          >
             <Picker
               title="来源类型"
               pickerStyle="menu"
               value={mode === "marketplace" ? 1 : 0}
               onChanged={(idx: number) => {
+                hideKeyboard()
                 const nextMode: SourceMode = idx === 1 ? "marketplace" : "direct"
                 setMode(nextMode)
                 setCatalogItems([])
@@ -497,9 +627,10 @@ export function SourceManagementView(props: {
                 />
                 <HStack spacing={8}>
                   <SourceActionButton
-                    title={catalogLoading ? "加载中…" : "加载当前目录"}
-                    systemImage="arrow.down.circle"
+                    title={catalogLoading ? "加载中…" : "加载目录"}
+                    systemImage="arrow.clockwise"
                     tint="systemBlue"
+                    fullWidth
                     disabled={catalogLoading || !repositoryURL.trim()}
                     onPress={() => loadMarketplace(repositoryPath)}
                   />
@@ -507,6 +638,7 @@ export function SourceManagementView(props: {
                     title="上一级"
                     systemImage="arrow.up"
                     tint="systemPurple"
+                    fullWidth
                     disabled={catalogLoading || !repositoryPath}
                     onPress={() => loadMarketplace(parentRepositoryPath(repositoryPath))}
                   />
@@ -516,26 +648,41 @@ export function SourceManagementView(props: {
                 </Text>
                 {catalogLoading ? <Text foregroundStyle="secondaryLabel">正在加载当前目录…</Text> : null}
                 {catalogError ? <Text foregroundStyle="systemRed">{catalogError}</Text> : null}
-                {catalogItems.map((item) => (
-                  <Button key={item.id} action={() => selectCatalogItem(item)} buttonStyle="plain">
-                    <HStack spacing={10} padding={{ top: 7, bottom: 7 }}>
-                      <Image
-                        systemName={item.kind === "directory" ? "folder" : "doc.text"}
-                        font={18}
-                        foregroundStyle={item.kind === "directory" ? "systemBlue" : "systemGreen"}
-                      />
-                      <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
-                        <Text lineLimit={1}>{item.name}</Text>
-                        <Text font="caption" foregroundStyle="secondaryLabel">
-                          {item.kind === "directory" ? "打开目录" : "选择并转换"}
-                        </Text>
-                      </VStack>
-                      <Image systemName="chevron.right" font={12} foregroundStyle="secondaryLabel" />
+                {catalogItems.map((item) => {
+                  const selected = item.kind === "module" && item.sourceURL === sourceURL
+                  return (
+                    <HStack key={item.id} spacing={8}>
+                      <Button
+                        action={() => void selectCatalogItem(item)}
+                        buttonStyle="plain"
+                        frame={{ maxWidth: "infinity", alignment: "leading" }}
+                      >
+                        <HStack spacing={10} padding={{ top: 7, bottom: 7 }}>
+                          <Image
+                            systemName={item.kind === "directory"
+                              ? "folder"
+                              : selected ? "checkmark.circle.fill" : "doc.text"}
+                            font={18}
+                            foregroundStyle={item.kind === "directory"
+                              ? "systemBlue"
+                              : selected ? "systemGreen" : "secondaryLabel"}
+                          />
+                          <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                            <Text lineLimit={1}>{item.name}</Text>
+                            <Text font="caption" foregroundStyle="secondaryLabel">
+                              {item.kind === "directory"
+                                ? "打开目录"
+                                : selected ? "已选择 · 点击打开操作" : "点击打开操作"}
+                            </Text>
+                          </VStack>
+                          <Image systemName="chevron.right" font={12} foregroundStyle="secondaryLabel" />
+                        </HStack>
+                      </Button>
                     </HStack>
-                  </Button>
-                ))}
+                  )
+                })}
                 <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
-                  选择文件后才会生成转换链接；这里不内置任何市场地址，也不会自动抓取其它目录。
+                  点击文件直接打开操作表；这里不内置任何市场地址，也不会自动抓取其它目录。
                 </Text>
               </>
             ) : (
@@ -572,9 +719,57 @@ export function SourceManagementView(props: {
             <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
               仅当来源按客户端识别请求时填写；只会作为 User-Agent 传递，不支持任意请求头。
             </Text>
+          </DisclosureGroup>
+
+          <Section header={<Text>转换操作</Text>}>
+            {conversionResult.error ? (
+              <Text foregroundStyle={mode === "marketplace" && !sourceURL ? "secondaryLabel" : "systemRed"}>
+                {conversionResult.error}
+              </Text>
+            ) : (
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={4}>
+                {conversionResult.url || "选择条目后生成转换链接"}
+              </Text>
+            )}
+            <HStack spacing={8}>
+              <SourceActionButton
+                title="复制原始"
+                systemImage="doc.on.doc"
+                tint="systemBlue"
+                fullWidth
+                disabled={!sourceURL.trim()}
+                onPress={() => copyValue(sourceURL.trim(), "原始链接")}
+              />
+              <SourceActionButton
+                title="复制转换"
+                systemImage="arrow.triangle.2.circlepath"
+                tint="systemPurple"
+                fullWidth
+                disabled={!conversionResult.url}
+                onPress={() => copyValue(conversionResult.url, "转换链接")}
+              />
+            </HStack>
+            <SourceActionButton
+              title={targetCanWriteToSurge && autoImport ? "转换并添加" : "复制转换链接"}
+              systemImage={targetCanWriteToSurge && autoImport ? "plus.circle.fill" : "doc.on.clipboard"}
+              tint="systemGreen"
+              fullWidth
+              disabled={busy || !conversionResult.url}
+              onPress={importCurrent}
+            />
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+              {scriptHubSourceFormatLabel(sourceFormat)} → {scriptHubTargetFormatLabel(targetFormat)}
+            </Text>
           </Section>
 
-          <Section header={<Text>转换设置</Text>}>
+          <DisclosureGroup
+            title="转换设置"
+            isExpanded={conversionSettingsExpanded}
+            onChanged={(expanded: boolean) => {
+              hideKeyboard()
+              setConversionSettingsExpanded(expanded)
+            }}
+          >
             <Picker
               title="来源格式"
               pickerStyle="menu"
@@ -641,45 +836,8 @@ export function SourceManagementView(props: {
                 ? "Surge 模块目标可以写入已授权的 Surge 目录；其它目标只生成并复制转换链接。"
                 : "当前目标是其它客户端格式。脚本会生成 Script-Hub 转换链接，但不会把非 Surge 文件伪装成 .sgmodule 写入本地目录。"}
             </Text>
-          </Section>
+          </DisclosureGroup>
 
-          <Section header={<Text>链接操作</Text>}>
-            {conversionResult.error ? (
-              <Text foregroundStyle={mode === "marketplace" && !sourceURL ? "secondaryLabel" : "systemRed"}>
-                {conversionResult.error}
-              </Text>
-            ) : (
-              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={4}>
-                {conversionResult.url || "填写地址或从市场目录选择条目后，这里会生成 Script-Hub 转换链接。"}
-              </Text>
-            )}
-            <HStack spacing={8}>
-              <SourceActionButton
-                title="复制原始链接"
-                systemImage="doc.on.doc"
-                tint="systemBlue"
-                disabled={!sourceURL.trim()}
-                onPress={() => copyValue(sourceURL.trim(), "原始链接")}
-              />
-              <SourceActionButton
-                title="复制转换链接"
-                systemImage="arrow.triangle.2.circlepath"
-                tint="systemPurple"
-                disabled={!conversionResult.url}
-                onPress={() => copyValue(conversionResult.url, "转换链接")}
-              />
-            </HStack>
-            <SourceActionButton
-              title={targetCanWriteToSurge && autoImport ? "一键转换并添加" : "生成并复制转换链接"}
-              systemImage={targetCanWriteToSurge && autoImport ? "plus.circle.fill" : "doc.on.clipboard"}
-              tint="systemGreen"
-              disabled={busy || !conversionResult.url}
-              onPress={importCurrent}
-            />
-            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
-              当前：{scriptHubSourceFormatLabel(sourceFormat)} → {scriptHubTargetFormatLabel(targetFormat)}
-            </Text>
-          </Section>
         </Form>
       </VStack>
     </NavigationStack>
