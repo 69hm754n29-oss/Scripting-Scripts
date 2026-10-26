@@ -512,7 +512,7 @@ export function SourceManagementView(props: {
                   />
                 </HStack>
                 <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
-                  当前目录：/{repositoryPath || "根目录"}。仅打开当前目录时请求，列表最多显示 256 项。
+                  当前目录：/{repositoryPath || "根目录"}。仅打开当前目录时请求，列表最多显示 1000 项。
                 </Text>
                 {catalogLoading ? <Text foregroundStyle="secondaryLabel">正在加载当前目录…</Text> : null}
                 {catalogError ? <Text foregroundStyle="systemRed">{catalogError}</Text> : null}

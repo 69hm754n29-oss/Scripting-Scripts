@@ -24,8 +24,15 @@ export type GitHubCatalogItem = {
 const GITHUB_HOST = "github.com"
 const GITHUB_API_HOST = "api.github.com"
 const DEFAULT_BRANCH = "main"
-const MAX_ITEMS = 256
-const MODULE_FILE_PATTERN = /\.(?:sgmodule|plugin|lpx|conf|list|rules?|txt)$/i
+// GitHub's Contents API returns at most 1,000 entries for one directory. Keep
+// the adapter within that bound so larger markets such as Rewrite do not lose
+// valid files merely because the first page contains unrelated entries.
+const MAX_ITEMS = 1000
+// Keep the catalog focused on proxy scripts/modules instead of exposing every
+// README, package file, or internal source file in a third-party repository.
+// `.js` is included because several open-source markets publish their primary
+// QX/Surge/Loon scripts as JavaScript files.
+const MODULE_FILE_PATTERN = /\.(?:js|sgmodule|sgmodulle|plugin|lpx|conf|list|rules?|snippet)$/i
 
 function cleanSegment(value: unknown, maxLength: number): string {
   return String(value ?? "")
@@ -100,7 +107,7 @@ function buildContentsURL(ref: GitHubRepositoryRef, path: string): string {
 
 function moduleNameFromPath(path: string): string {
   const filename = path.split("/").filter(Boolean).pop() ?? ""
-  return filename.replace(/\.(?:sgmodule|plugin|lpx|conf|list|rules?|txt)$/i, "") || filename
+  return filename.replace(/\.(?:js|sgmodule|sgmodulle|plugin|lpx|conf|list|rules?|snippet)$/i, "") || filename
 }
 
 /**

@@ -86,7 +86,9 @@ export function inferScriptHubSourceFormat(value: unknown): ScriptHubSourceForma
   if (/\.(?:plugin|lpx)$/.test(raw)) return "loon-plugin"
   if (/\.(?:list|rules?)$/.test(raw)) return "rule-set"
   if (/\.(?:js|script)$/.test(raw)) return "qx-script"
-  if (/\.(?:sgmodule|conf)$/.test(raw)) return "surge-module"
+  if (/\.(?:sgmodule|sgmodulle)$/.test(raw)) return "surge-module"
+  if (/\.conf$/.test(raw)) return "qx-rewrite"
+  if (/\.snippet$/.test(raw)) return "plain-text"
   return "loon-plugin"
 }
 
