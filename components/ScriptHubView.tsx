@@ -5,6 +5,7 @@ import {
   Form,
   HStack,
   Image,
+  Menu,
   NavigationStack,
   Picker,
   ProgressView,
@@ -296,7 +297,17 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
   const [status, setStatus] = useState("")
   const [detectedReason, setDetectedReason] = useState("")
   const [sourceSettingsExpanded, setSourceSettingsExpanded] = useState(true)
+  const [formatExpanded, setFormatExpanded] = useState(true)
+  const [outputExpanded, setOutputExpanded] = useState(true)
+  const [typeGuideExpanded, setTypeGuideExpanded] = useState(false)
   const [advancedExpanded, setAdvancedExpanded] = useState(false)
+  const [advancedSections, setAdvancedSections] = useState({
+    rewrite: false,
+    script: false,
+    schedule: false,
+    runtime: false,
+  })
+  const [clientExpanded, setClientExpanded] = useState(false)
 
   const categories = cfg.categories ?? []
   const categoryOptions = useMemo(() => ["不设置分类", ...categories], [categories])
@@ -322,6 +333,10 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
 
   function updateAdvanced<K extends keyof ScriptHubAdvancedValues>(key: K, value: ScriptHubAdvancedValues[K]) {
     setAdvanced((previous) => ({ ...previous, [key]: value }))
+  }
+
+  function updateAdvancedSection(key: keyof typeof advancedSections, expanded: boolean) {
+    setAdvancedSections((previous) => ({ ...previous, [key]: expanded }))
   }
 
   function advancedParams(): Record<string, string | number | boolean | undefined> {
@@ -489,6 +504,15 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     await copyText(conversionResult.url, "Script-Hub 转换链接已复制")
   }
 
+  async function copySource() {
+    const value = inputMode === "local-text" ? localText.trim() : sourceURL.trim()
+    if (!value) {
+      await Dialog.alert({ title: "原始内容不可用", message: "请先填写来源链接或本地文本内容" })
+      return
+    }
+    await copyText(value, inputMode === "local-text" ? "本地文本已复制" : "原始来源链接已复制")
+  }
+
   async function openResult() {
     if (!conversionResult.url) return copyConversionURL()
     if (!(await openExternalURL(conversionResult.url))) {
@@ -598,6 +622,13 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
     setEnableJQ(true)
     setAdvanced({ ...DEFAULT_ADVANCED })
     setDetectedReason("")
+    setSourceSettingsExpanded(true)
+    setFormatExpanded(true)
+    setOutputExpanded(true)
+    setTypeGuideExpanded(false)
+    setAdvancedExpanded(false)
+    setAdvancedSections({ rewrite: false, script: false, schedule: false, runtime: false })
+    setClientExpanded(false)
     setStatus("已重置")
   }
 
@@ -658,6 +689,9 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               setSourceSettingsExpanded(expanded)
             }}
           >
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              远程输入请填写可直接访问的 HTTPS 文件地址；本地输入适合粘贴转换后的原始文本。不要复制浏览器地址栏中未编码的转换链接。
+            </Text>
             <Picker
               title="输入方式"
               pickerStyle="segmented"
@@ -725,7 +759,17 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             {detectedReason ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>{detectedReason}</Text> : null}
           </DisclosureGroup>
 
-          <Section header={<Text>格式</Text>}>
+          <DisclosureGroup
+            title="格式与目标"
+            isExpanded={formatExpanded}
+            onChanged={(expanded: boolean) => {
+              hideKeyboard()
+              setFormatExpanded(expanded)
+            }}
+          >
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              来源格式决定解析方式，目标格式决定最终文件类型。自动识别失败时可以手动修正。
+            </Text>
             <Picker
               title={sourceFormatAuto ? "来源格式（自动）" : "来源格式（手动）"}
               pickerStyle="menu"
@@ -742,6 +786,25 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             >
               {SCRIPT_HUB_SOURCE_FORMATS.map((item, idx) => <Text key={item.value} tag={idx}>{item.label}</Text>)}
             </Picker>
+            <HStack spacing={8}>
+              <Image
+                systemName={sourceFormatAuto ? "wand.and.stars" : "hand.point.up.left.fill"}
+                font={14}
+                foregroundStyle={sourceFormatAuto ? "systemBlue" : "systemOrange"}
+              />
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                {sourceFormatAuto ? "输入内容变化时会自动重新判断格式" : "已手动指定来源格式，不会被路径后缀覆盖"}
+              </Text>
+              <Spacer />
+              <Button
+                title="恢复自动"
+                systemImage="arrow.counterclockwise"
+                buttonStyle="borderless"
+                tint="systemBlue"
+                disabled={busy || !hasSource || sourceFormatAuto}
+                action={() => { void detectFormat() }}
+              />
+            </HStack>
             <Picker
               title="目标格式"
               pickerStyle="menu"
@@ -758,9 +821,31 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               <Spacer />
               <Text foregroundStyle="secondaryLabel">Script-Hub 测试版</Text>
             </HStack>
-          </Section>
+            <DisclosureGroup
+              title="如何选择类型"
+              isExpanded={typeGuideExpanded}
+              onChanged={(expanded: boolean) => setTypeGuideExpanded(expanded)}
+            >
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={6}>
+                来源类型按原始文件语法选择：QX 重写、Surge 模块、Loon 插件、规则集、QX 专属脚本或纯文本。目标类型按你要导入的客户端选择；普通插件或模块通常使用“Surge / Egern 模块”。
+              </Text>
+              <Text font="caption" foregroundStyle="systemOrange" lineLimit={4}>
+                QX 专属脚本只能转换为 Surge 脚本（兼容），不能直接伪装成 Surge 模块写入模块目录。
+              </Text>
+            </DisclosureGroup>
+          </DisclosureGroup>
 
-          <Section header={<Text>输出设置</Text>}>
+          <DisclosureGroup
+            title="输出设置"
+            isExpanded={outputExpanded}
+            onChanged={(expanded: boolean) => {
+              hideKeyboard()
+              setOutputExpanded(expanded)
+            }}
+          >
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              名称、文件名和分类用于生成结果及写入 Surge 时的本地模块信息。
+            </Text>
             <TextField
               label={<Text>模块名称</Text>}
               value={moduleName}
@@ -807,6 +892,36 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             />
             <Toggle title="移除源格式元数据" value={removeSourceMetadata} onChanged={setRemoveSourceMetadata} />
             <Toggle title="启用 jq 转换兼容" value={enableJQ} onChanged={setEnableJQ} />
+          </DisclosureGroup>
+
+          <Section header={<Text>快速操作</Text>}>
+            <HStack spacing={10} padding={{ top: 4, bottom: 4 }}>
+              <Image
+                systemName={hasSource ? "checkmark.circle.fill" : "circle.dashed"}
+                font={28}
+                foregroundStyle={hasSource ? "systemGreen" : "secondaryLabel"}
+              />
+              <VStack alignment="leading" spacing={3} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                <Text font="headline">{hasSource ? "已准备好转换" : "等待来源内容"}</Text>
+                <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+                  {hasSource
+                    ? `${scriptHubSourceFormatLabel(sourceFormat)} → ${scriptHubTargetFormatLabel(targetFormat)} · ${outputFilename}`
+                    : "先填写来源链接或粘贴本地文本，再选择目标格式"}
+                </Text>
+              </VStack>
+            </HStack>
+            <ActionButton
+              title={busy ? "处理中…" : targetCanWriteToSurge ? "转换并写入 Surge" : "生成目标导入链接"}
+              systemImage={targetCanWriteToSurge ? "arrow.down.doc.fill" : "arrow.up.forward.app"}
+              tint="systemGreen"
+              disabled={busy || !conversionResult.url}
+              onPress={writeToSurge}
+            />
+            {!conversionResult.url && hasSource ? (
+              <Text font="caption" foregroundStyle="systemOrange" lineLimit={3}>
+                {conversionResult.error || "当前来源暂时无法生成转换链接，请检查格式和地址。"}
+              </Text>
+            ) : null}
           </Section>
 
           <DisclosureGroup
@@ -817,6 +932,9 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               setAdvancedExpanded(expanded)
             }}
           >
+            <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
+              下面的参数与 Script-Hub 测试版保持一致；不确定时保持默认值即可。
+            </Text>
             <TextField
               label={<Text>自定义请求头</Text>}
               value={advanced.headers}
@@ -827,7 +945,14 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             />
             <TextField label={<Text>图标链接</Text>} value={advanced.icon} onChanged={(value: string) => updateAdvanced("icon", value)} prompt="可选" />
 
-            <DisclosureGroup title="重写与规则筛选" isExpanded={false} onChanged={() => {}}>
+            <DisclosureGroup
+              title="重写与规则筛选"
+              isExpanded={advancedSections.rewrite}
+              onChanged={(expanded: boolean) => updateAdvancedSection("rewrite", expanded)}
+            >
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                用关键词筛选重写或规则，并按需修改请求头。
+              </Text>
               <TextField label={<Text>保留重写关键词</Text>} value={advanced.keepRewrite} onChanged={(value: string) => updateAdvanced("keepRewrite", value)} prompt="多个关键词用 + 分隔" />
               <TextField label={<Text>排除重写关键词</Text>} value={advanced.excludeRewrite} onChanged={(value: string) => updateAdvanced("excludeRewrite", value)} prompt="多个关键词用 + 分隔" />
               <TextField label={<Text>保留规则关键词</Text>} value={advanced.keepRule} onChanged={(value: string) => updateAdvanced("keepRule", value)} prompt="规则集来源时生效" />
@@ -839,7 +964,14 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               <Toggle title="启用 jsDelivr 兼容" value={advanced.jsDelivr} onChanged={(value: boolean) => updateAdvanced("jsDelivr", value)} />
             </DisclosureGroup>
 
-            <DisclosureGroup title="脚本转换与兼容" isExpanded={false} onChanged={() => {}}>
+            <DisclosureGroup
+              title="脚本转换与兼容"
+              isExpanded={advancedSections.script}
+              onChanged={(expanded: boolean) => updateAdvancedSection("script", expanded)}
+            >
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                仅在来源包含脚本时使用；目标不支持的能力不会被静默伪装。
+              </Text>
               <TextField label={<Text>脚本转换 1 关键词</Text>} value={advanced.scriptTransform} onChanged={(value: string) => updateAdvanced("scriptTransform", value)} prompt="多个关键词用 + 分隔" />
               <Toggle title="脚本转换 1：全部转换" value={advanced.scriptTransformAll} onChanged={(value: boolean) => updateAdvanced("scriptTransformAll", value)} />
               <TextField label={<Text>脚本转换 2 关键词</Text>} value={advanced.scriptTransform2} onChanged={(value: string) => updateAdvanced("scriptTransform2", value)} prompt="多个关键词用 + 分隔" />
@@ -856,7 +988,14 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               <TextField label={<Text>脚本转换链接处理</Text>} value={advanced.evalURLJSModified} onChanged={(value: string) => updateAdvanced("evalURLJSModified", value)} prompt="可选 URL" />
             </DisclosureGroup>
 
-            <DisclosureGroup title="定时任务与脚本参数" isExpanded={false} onChanged={() => {}}>
+            <DisclosureGroup
+              title="定时任务与脚本参数"
+              isExpanded={advancedSections.schedule}
+              onChanged={(expanded: boolean) => updateAdvancedSection("schedule", expanded)}
+            >
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                配置 cron、脚本名、超时、引擎和面板参数。
+              </Text>
               <TextField label={<Text>任务类型</Text>} value={advanced.cron} onChanged={(value: string) => updateAdvanced("cron", value)} prompt="例如 cron" />
               <TextField label={<Text>定时表达式</Text>} value={advanced.cronExpression} onChanged={(value: string) => updateAdvanced("cronExpression", value)} prompt="Cron 表达式" />
               <TextField label={<Text>脚本名称关键词</Text>} value={advanced.scriptName} onChanged={(value: string) => updateAdvanced("scriptName", value)} />
@@ -872,7 +1011,14 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
               <TextField label={<Text>面板颜色</Text>} value={advanced.tileColor} onChanged={(value: string) => updateAdvanced("tileColor", value)} prompt="十六进制或颜色值" />
             </DisclosureGroup>
 
-            <DisclosureGroup title="规则运行选项" isExpanded={false} onChanged={() => {}}>
+            <DisclosureGroup
+              title="规则运行选项"
+              isExpanded={advancedSections.runtime}
+              onChanged={(expanded: boolean) => updateAdvancedSection("runtime", expanded)}
+            >
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                控制缓存、解析、MITM、通知和响应处理行为。
+              </Text>
               <TextField label={<Text>缓存时间</Text>} value={advanced.cacheExpiry} onChanged={(value: string) => updateAdvanced("cacheExpiry", value)} prompt="cachexp" />
               <Toggle title="禁用缓存" value={advanced.noCache} onChanged={(value: boolean) => updateAdvanced("noCache", value)} />
               <Toggle title="禁用规则解析" value={advanced.noResolve} onChanged={(value: boolean) => updateAdvanced("noResolve", value)} />
@@ -885,13 +1031,33 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
           </DisclosureGroup>
 
           <Section header={<Text>转换结果</Text>}>
+            <HStack spacing={8}>
+              <Image
+                systemName={conversionResult.url ? "checkmark.circle.fill" : "info.circle"}
+                font={16}
+                foregroundStyle={conversionResult.url ? "systemGreen" : "secondaryLabel"}
+              />
+              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+                {conversionResult.url ? "转换链接已根据当前选项实时生成" : "填写来源后会在这里生成转换链接"}
+              </Text>
+              <Spacer />
+              <Text font="caption2" foregroundStyle={targetCanWriteToSurge ? "systemGreen" : "systemBlue"}>
+                {targetCanWriteToSurge ? "可写入" : "可导入"}
+              </Text>
+            </HStack>
+            <VStack
+              alignment="leading"
+              spacing={4}
+              padding={{ top: 8, bottom: 8, leading: 10, trailing: 10 }}
+            >
             {conversionResult.error ? (
               <Text foregroundStyle="systemRed" lineLimit={4}>{conversionResult.error}</Text>
             ) : (
-              <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={5}>
+              <Text font="caption2" foregroundStyle="secondaryLabel" lineLimit={5}>
                 {conversionResult.url || "填写来源链接后生成转换链接"}
               </Text>
             )}
+            </VStack>
             <Divider />
             <HStack spacing={8}>
               <ActionButton
@@ -911,14 +1077,14 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             </HStack>
             <HStack spacing={8}>
               <ActionButton
-                title="复制转换链接"
+                title="复制转换"
                 systemImage="doc.on.doc"
                 tint="systemOrange"
                 disabled={busy || !conversionResult.url}
                 onPress={copyConversionURL}
               />
               <ActionButton
-                title={targetCanWriteToSurge ? "转换并写入" : "复制目标链接"}
+                title={targetCanWriteToSurge ? "再次写入" : "复制目标"}
                 systemImage={targetCanWriteToSurge ? "arrow.down.doc.fill" : "doc.on.clipboard"}
                 tint="systemGreen"
                 disabled={busy || !conversionResult.url}
@@ -930,21 +1096,39 @@ export function ScriptHubView(props: { onImported?: () => void; tag?: number; ta
             </Text>
             {busy ? <ProgressView progressViewStyle="circular" /> : null}
             {status ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>{status}</Text> : null}
+            <Menu
+              label={(
+                <HStack spacing={6} frame={{ maxWidth: "infinity", minHeight: 38, alignment: "center" }}>
+                  <Image systemName="arrow.up.forward.app" font={15} foregroundStyle="systemBlue" />
+                  <Text foregroundStyle="systemBlue">更多导入与复制</Text>
+                </HStack>
+              )}
+              disabled={busy || !conversionResult.url}
+              buttonStyle="bordered"
+              tint="systemBlue"
+              frame={{ maxWidth: "infinity", minHeight: 40 }}
+            >
+              <Button title="导入 Surge（远程模块）" systemImage="arrow.down.circle" action={() => { void openClientImport("surge") }} />
+              <Button title="导入 Egern" systemImage="arrow.down.circle" action={() => { void openClientImport("egern") }} />
+              <Button title="导入 Scriptable" systemImage="square.and.arrow.down" action={() => { void openClientImport("scriptable") }} />
+              <Button title="导入 Scripting（本地模块）" systemImage="square.and.arrow.down" disabled={!scriptingScriptName.trim()} action={() => { void openClientImport("scripting") }} />
+              <Button title="复制原始来源" systemImage="doc.on.clipboard" action={() => { void copySource() }} />
+              <Button title="复制转换链接" systemImage="doc.on.doc" action={() => { void copyConversionURL() }} />
+            </Menu>
           </Section>
 
           {conversionResult.url && targetFormat === "surge-module" ? (
-            <DisclosureGroup title="客户端导入" isExpanded={false} onChanged={(expanded: boolean) => { if (!expanded) hideKeyboard() }}>
+            <DisclosureGroup
+              title="客户端导入设置"
+              isExpanded={clientExpanded}
+              onChanged={(expanded: boolean) => {
+                hideKeyboard()
+                setClientExpanded(expanded)
+              }}
+            >
               <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
-                这些按钮只负责拉起对应客户端；转换结果仍由 Script-Hub 测试版提供。
+                这里的按钮只负责拉起对应客户端；转换结果仍由 Script-Hub 测试版提供。Scripting 导入需要脚本名与脚本设置保持一致。
               </Text>
-              <HStack spacing={8}>
-                <ActionButton title="导入 Surge" systemImage="arrow.down.circle" tint="systemBlue" onPress={() => openClientImport("surge")} />
-                <ActionButton title="导入 Egern" systemImage="arrow.down.circle" tint="systemGreen" onPress={() => openClientImport("egern")} />
-              </HStack>
-              <HStack spacing={8}>
-                <ActionButton title="导入 Scriptable" systemImage="square.and.arrow.down" tint="systemOrange" onPress={() => openClientImport("scriptable")} />
-                <ActionButton title="导入 Scripting" systemImage="square.and.arrow.down" tint="systemPurple" disabled={!scriptingScriptName.trim()} onPress={() => openClientImport("scripting")} />
-              </HStack>
               <TextField label={<Text>Scripting 脚本名</Text>} value={scriptingScriptName} onChanged={setScriptingScriptName} prompt="填写 Scripting 中显示的脚本名" />
               <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={3}>
                 首次使用 Scripting 导入前，请先在对应脚本设置里选择 Surge 模块书签目录。
