@@ -2,13 +2,19 @@
 
 用于在 iPhone、iPad 上管理 Surge 本地 `.sgmodule` 模块的 Scripting 脚本。
 
-## 项目地址
+## 导入地址
 
-远程导入地址：
+请复制下面这一行，粘贴到 Scripting 的“导入远程脚本”输入框：
 
-<https://github.com/ranzhigg/Scripting-Scripts>
+```text
+https://github.com/ranzhigg/Scripting-Scripts
+```
 
-在 Scripting 的“导入远程脚本”中直接粘贴仓库地址即可。当前脚本清单位于仓库根目录，不需要进入子目录。
+不要先打开链接再复制浏览器地址栏。浏览器地址栏中的链接可能未编码，会导致导入参数异常。
+
+源码和文档浏览地址：[GitHub 仓库](https://github.com/ranzhigg/Scripting-Scripts)
+
+当前脚本清单位于仓库根目录，不需要进入子目录。
 
 ## 功能
 
@@ -33,7 +39,7 @@
 ## 安装
 
 1. 打开 Scripting 的远程脚本导入功能。
-2. 粘贴：`https://github.com/ranzhigg/Scripting-Scripts`
+2. 粘贴远程导入地址：`https://github.com/ranzhigg/Scripting-Scripts`
 3. 导入后打开“Surge 模块管理”。
 4. 进入设置，选择 Surge 使用的 iCloud 模块目录。
 5. 在项目标题的 Intent 设置中启用 `File URLs`、`URLs` 和 `Text`。
