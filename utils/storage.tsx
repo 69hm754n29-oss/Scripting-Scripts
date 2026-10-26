@@ -5,6 +5,8 @@ import { backupModulePath } from "./backups"
 export type ModuleInfo = {
   name: string
   link: string
+  /** Original source URL kept by a third-party conversion adapter, if any. */
+  sourceURL?: string
   surgeName?: string
   category?: string
   icon?: string
@@ -295,6 +297,7 @@ async function readModuleInfo(
   }
 
   const link = parseLinkFromContent(text, prefixes)
+  const sourceURL = parseTag(text, "source-url")
   const localTag = parseTag(text, "local")
   const hasLocalTag =
     localTag != null &&
@@ -307,6 +310,7 @@ async function readModuleInfo(
   return {
     name,
     link,
+    sourceURL,
     surgeName,
     category,
     icon,
@@ -424,7 +428,7 @@ function upsertLink(content: string, prefixes: string[], value?: string): string
 
 export async function updateModuleMetadata(
   target: ModuleInfo | string,
-  info: { link?: string; category?: string; icon?: string; local?: boolean }
+  info: { link?: string; sourceURL?: string; category?: string; icon?: string; local?: boolean }
 ) {
   const fm = fmOrThrow()
   const path = resolveModulePath(target)
@@ -432,6 +436,9 @@ export async function updateModuleMetadata(
   const raw = await fm.readAsString(path)
   let content = String(raw ?? "")
   content = upsertLink(content, getLinkPrefixes(), info.link)
+  if (Object.prototype.hasOwnProperty.call(info, "sourceURL")) {
+    content = upsertTag(content, "source-url", info.sourceURL)
+  }
   content = upsertTag(content, "category", info.category)
   if (info.icon !== undefined) {
     content = upsertTag(content, "icon", info.icon)
@@ -452,6 +459,7 @@ export async function saveLocalModule(info: ModuleInfo, rawContent: string): Pro
   const path = moduleFilePath(info.name, targetDir)
   let content = String(rawContent ?? "")
   content = upsertTag(content, "local", "true")
+  content = upsertTag(content, "source-url", info.sourceURL)
   content = upsertTag(content, "category", info.category)
   await backupModulePath(path)
   await fm.writeAsString(path, content)

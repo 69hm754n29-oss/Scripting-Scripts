@@ -579,7 +579,7 @@ export function EditModuleView(props: {
 
               <Section header={<Text>自定义来源</Text>}>
                 <Text foregroundStyle="secondaryLabel" lineLimit={4}>
-                  当前不内置第三方在线库。后续可添加自定义来源，并通过 Script-Hub 转换后导入 Surge。
+                  不内置第三方在线库。需要使用自定义来源时，请回到主页底部“来源”，填写直链并通过 Script-Hub 转换后添加。
                 </Text>
               </Section>
             </>

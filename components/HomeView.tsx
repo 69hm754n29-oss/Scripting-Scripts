@@ -40,6 +40,7 @@ import {
 import { loadConfig, persistCategory, type AppConfig } from "../utils/config"
 import { downloadModule, previewModuleUpdate, type ModuleUpdatePreview } from "../utils/downloader"
 import { EditModuleView } from "./EditModuleView"
+import { SourceManagementView } from "./SourceManagementView"
 import { RemoteControlView } from "./RemoteControlView"
 import { SettingsView } from "./SettingsView"
 import { useMarkdownReleaseNotesSheet } from "./ReleaseNotesSheet"
@@ -56,6 +57,7 @@ import {
 } from "../utils/backups"
 import { inspectModuleHealth } from "../utils/health"
 import { recordRecentImport } from "../utils/recent_imports"
+import type { SourceImportRequest } from "../utils/source_adapters"
 
 function ModuleIcon(props: { module: ModuleInfo }) {
   const [failed, setFailed] = useState(false)
@@ -383,7 +385,7 @@ function ModuleSummaryCard(props: {
 function BottomActionButton(props: {
   title: string
   systemImage: string
-  tint: "systemBlue" | "systemGreen"
+  tint: "systemBlue" | "systemGreen" | "systemPurple"
   disabled?: boolean
   onPress: () => void | Promise<void>
 }) {
@@ -773,6 +775,66 @@ export function HomeView() {
     }
   }
 
+  async function importFromCustomSource(request: SourceImportRequest): Promise<{ ok: boolean; message?: string }> {
+    const current = modules.length ? modules : await loadModules()
+    const nameExists = current.some((item) => item.name === request.moduleName)
+    if (nameExists) {
+      return { ok: false, message: `本地已存在同名模块“${request.moduleName}”，请先改名或编辑现有模块。` }
+    }
+    if (current.some((item) => item.link === request.convertedURL)) {
+      return { ok: false, message: "本地已存在相同的转换链接。" }
+    }
+
+    setBusy(true)
+    setStage(`转换并添加：${request.moduleName}`)
+    setProgress(null)
+    try {
+      const info: ModuleInfo = {
+        name: request.moduleName,
+        link: request.convertedURL,
+        sourceURL: request.keepOriginalLink ? request.sourceURL : undefined,
+        category: request.category,
+        saveDir: request.saveDir,
+        isLocal: false,
+      }
+      persistModuleCategory(info.category)
+      const result = await downloadModule(info, { mode: "direct" })
+      if (!result.ok) {
+        setStage(`转换失败：${request.moduleName}`)
+        return { ok: false, message: result.message ?? "转换模块下载失败" }
+      }
+      recordRecentImport(info)
+      await refreshModules()
+      await syncMetadataIfNeeded()
+      setStage("转换并添加完成")
+      return { ok: true }
+    } catch (e: any) {
+      const message = String(e?.message ?? e)
+      setStage(`转换失败：${message}`)
+      return { ok: false, message }
+    } finally {
+      setBusy(false)
+      setProgress(null)
+    }
+  }
+
+  async function openSourceManagement() {
+    if (busy) return
+    const subDirs = await listDirectSubDirs()
+    await Navigation.present({
+      element: (
+        <SourceManagementView
+          categories={categories}
+          saveDirs={subDirs}
+          onImport={importFromCustomSource}
+        />
+      ),
+      modalPresentationStyle: "pageSheet",
+    })
+    setCfg(loadConfig())
+    await refreshModules()
+  }
+
   async function modifyModuleFor(target: ModuleInfo) {
     const current = modules
     const subDirs = await listDirectSubDirs()
@@ -832,6 +894,7 @@ export function HomeView() {
       } else {
         await updateModuleMetadata({ ...merged, name: finalName, filePath: finalFilePath }, {
           link: merged.link,
+          sourceURL: merged.sourceURL,
           category: merged.category,
           local: false,
         })
@@ -1485,6 +1548,13 @@ export function HomeView() {
                     tint="systemBlue"
                     disabled={busy}
                     onPress={addModule}
+                  />
+                  <BottomActionButton
+                    title="来源"
+                    systemImage="link.badge.plus"
+                    tint="systemPurple"
+                    disabled={busy}
+                    onPress={openSourceManagement}
                   />
                   <BottomActionButton
                     title="更新全部"

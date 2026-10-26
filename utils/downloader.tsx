@@ -53,6 +53,16 @@ function injectCategory(content: string, category?: string): string {
   return `${line}\n${content}`
 }
 
+function injectSourceURL(content: string, sourceURL?: string): string {
+  const value = String(sourceURL ?? "").trim()
+  if (!value) return content
+  const line = `#!source-url=${value}`
+  if (/^\s*#!\s*source-url\s*=.*$/im.test(content)) {
+    return content.replace(/^\s*#!\s*source-url\s*=.*$/im, line)
+  }
+  return `${line}\n${content}`
+}
+
 function prepareModuleText(
   rawText: string,
   info: ModuleInfo & { linkPrefix?: string },
@@ -61,6 +71,7 @@ function prepareModuleText(
   let content = injectNameFlag(safeText)
   content = injectUrl(content, info.link, info.linkPrefix)
   content = injectCategory(content, info.category)
+  content = injectSourceURL(content, info.sourceURL)
   return content
 }
 
