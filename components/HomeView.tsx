@@ -1059,6 +1059,12 @@ export function HomeView() {
                 systemImage={searchVisible || searchText.trim() ? "magnifyingglass.circle.fill" : "magnifyingglass"}
                 action={withButtonHaptic(() => setSearchVisible((value) => !value))}
               />
+              <Button
+                title=""
+                systemImage="arrow.clockwise"
+                disabled={busy}
+                action={withButtonHaptic(refreshAll)}
+              />
             </HStack>
           ),
           topBarTrailing: (
@@ -1143,11 +1149,11 @@ export function HomeView() {
                     onPress={addModule}
                   />
                   <BottomActionButton
-                    title="刷新"
+                    title="更新全部"
                     systemImage="arrow.triangle.2.circlepath"
                     tint="systemGreen"
                     disabled={busy || onlyLocalFiltered}
-                    onPress={refreshAll}
+                    onPress={downloadAll}
                   />
                 </HStack>
               )
