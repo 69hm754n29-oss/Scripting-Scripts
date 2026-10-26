@@ -1,12 +1,10 @@
 import {
   Button,
   Editor,
-  Group,
   Form,
+  Image,
   Navigation,
   NavigationStack,
-  EmptyView,
-  List,
   Section,
   Toggle,
   Text,
@@ -21,10 +19,65 @@ import {
 } from "scripting"
 
 import { loadModules, type ModuleInfo } from "../utils/storage"
+import {
+  clearRecentImports,
+  loadRecentImports,
+  type RecentImport,
+} from "../utils/recent_imports"
 
-let cachedLibraryItems: ModuleInfo[] | null = null
-let cachedLibraryError: string | null = null
-let cachedLibraryPromise: Promise<ModuleInfo[]> | null = null
+function QuickImportRow(props: {
+  title: string
+  subtitle: string
+  systemImage: string
+  tint: "systemBlue" | "systemGreen" | "systemPurple"
+  onPress: () => void | Promise<void>
+}) {
+  return (
+    <Button
+      buttonStyle="plain"
+      action={() => {
+        HapticFeedback.mediumImpact()
+        void props.onPress()
+      }}
+    >
+      <HStack
+        spacing={12}
+        padding={{ top: 12, bottom: 12, leading: 4, trailing: 4 }}
+        frame={{ maxWidth: "infinity", alignment: "leading" }}
+      >
+        <Image
+          systemName={props.systemImage}
+          font={22}
+          foregroundStyle={props.tint}
+          frame={{ width: 42, height: 42 }}
+          background={{
+            style: "secondarySystemBackground",
+            shape: { type: "rect", cornerRadius: 12 },
+          }}
+        />
+        <VStack alignment="leading" spacing={3} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+          <Text font="headline">{props.title}</Text>
+          <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>
+            {props.subtitle}
+          </Text>
+        </VStack>
+        <Image systemName="chevron.right" font={14} foregroundStyle="tertiaryLabel" />
+      </HStack>
+    </Button>
+  )
+}
+
+function relativeImportTime(timestamp: number): string {
+  if (!timestamp) return "时间未知"
+  const delta = Math.max(0, Date.now() - timestamp)
+  const minute = 60 * 1000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (delta < minute) return "刚刚"
+  if (delta < hour) return `${Math.max(1, Math.floor(delta / minute))} 分钟前`
+  if (delta < day) return `${Math.max(1, Math.floor(delta / hour))} 小时前`
+  return `${Math.max(1, Math.floor(delta / day))} 天前`
+}
 
 function LocalContentEditorView(props: {
   initialContent: string
@@ -85,14 +138,9 @@ export function EditModuleView(props: {
   const [link, setLink] = useState<string>(initial?.link ?? "")
   const [isRemote, setIsRemote] = useState<boolean>(initial ? !!initial.link : true)
   const [content, setContent] = useState<string>("")
-  const [libraryItems, setLibraryItems] = useState<ModuleInfo[]>([])
-  const [libraryLoading, setLibraryLoading] = useState(false)
-  const [libraryError, setLibraryError] = useState("")
   const [existingLinks, setExistingLinks] = useState<Set<string>>(new Set())
   const [existingNames, setExistingNames] = useState<Set<string>>(new Set())
-  const [filterText, setFilterText] = useState("")
-  const [showOnlyNew, setShowOnlyNew] = useState(false)
-  const showLibrary = !initial
+  const [recentImports, setRecentImports] = useState<RecentImport[]>([])
 
   const categoryOptions = useMemo<string[]>(() => ["不设置分类", ...props.categories], [props.categories])
   const initialIdx = Math.max(
@@ -112,10 +160,10 @@ export function EditModuleView(props: {
   const [saveDirIdx, setSaveDirIdx] = useState<number>(0)
 
   useEffect(() => {
-    if (!showLibrary) return
-    void loadLibrary()
+    if (initial) return
     void loadExistingLinks()
-  }, [showLibrary])
+    setRecentImports(loadRecentImports())
+  }, [initial])
 
   useEffect(() => {
     const currentDir = initial?.saveDir ?? ""
@@ -147,108 +195,6 @@ export function EditModuleView(props: {
     } catch {
       setExistingLinks(new Set())
       setExistingNames(new Set())
-    }
-  }
-
-  function decodeHtml(s: string): string {
-    return s
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, "\"")
-      .replace(/&#39;/g, "'")
-  }
-
-  function stripTags(s: string): string {
-    const cleaned = decodeHtml(s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())
-    return cleaned.replace(/\.sgmodule\s*$/i, "").trim()
-  }
-
-  function extractLinks(html: string): ModuleInfo[] {
-    const re = /<a\s+[^>]*href=["'](https:\/\/raw\.githubusercontent\.com[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
-    const list: ModuleInfo[] = []
-    let m: RegExpExecArray | null
-    while ((m = re.exec(html))) {
-      const link = m[1]?.trim()
-      const name = stripTags(m[2] ?? "")
-      if (name && link) list.push({ name, link })
-    }
-    return list
-  }
-
-  function uniqueByLink(list: ModuleInfo[]): ModuleInfo[] {
-    const seen = new Set<string>()
-    const out: ModuleInfo[] = []
-    for (const item of list) {
-      if (seen.has(item.link)) continue
-      seen.add(item.link)
-      out.push(item)
-    }
-    return out
-  }
-
-  function pickSection(html: string, marker: string, endMarkers: string[]): string | null {
-    const idx = html.indexOf(marker)
-    if (idx < 0) return null
-    let end = html.length
-    for (const e of endMarkers) {
-      const i = html.indexOf(e, idx + marker.length)
-      if (i >= 0 && i < end) end = i
-    }
-    return html.slice(idx, end)
-  }
-
-  async function loadLibrary() {
-    try {
-      if (cachedLibraryItems) {
-        setLibraryItems(cachedLibraryItems)
-        setLibraryError(cachedLibraryError ?? "")
-        return
-      }
-      if (cachedLibraryPromise) {
-        setLibraryLoading(true)
-        const list = await cachedLibraryPromise
-        setLibraryItems(list)
-        setLibraryError(cachedLibraryError ?? "")
-        return
-      }
-      setLibraryLoading(true)
-      setLibraryError("")
-      cachedLibraryPromise = (async () => {
-        const fetchFn: any = (globalThis as any).fetch
-        if (typeof fetchFn !== "function") throw new Error("fetch 不可用")
-        const res = await fetchFn("https://surge.qingr.moe/", {
-          headers: { "User-Agent": "Mozilla/5.0" },
-        })
-        if (!res?.ok) throw new Error(`请求失败：${res?.status ?? "unknown"}`)
-        const html = await res.text()
-
-        const all = extractLinks(html)
-        const preSection = pickSection(html, "前置依赖", ["Official", "Beta", "Others", "官方", "测试"]) ?? ""
-        const pre = preSection ? extractLinks(preSection) : all.slice(0, 2)
-        const preSet = new Set(pre.map((i) => i.link))
-        const official = all.filter((i) => i.link.includes(".official.") && !preSet.has(i.link))
-        const beta = all.filter((i) => i.link.includes(".beta.") && !preSet.has(i.link))
-        const others = all.filter(
-          (i) =>
-            i.link.includes(".sgmodule") &&
-            !i.link.includes(".official.") &&
-            !i.link.includes(".beta.") &&
-            !preSet.has(i.link)
-        )
-        return uniqueByLink([...pre, ...official, ...beta, ...others])
-      })()
-
-      const combined = await cachedLibraryPromise
-      cachedLibraryItems = combined
-      cachedLibraryError = null
-      setLibraryItems(combined)
-    } catch (e: any) {
-      const msg = String(e?.message ?? e)
-      cachedLibraryError = msg
-      setLibraryError(msg)
-    } finally {
-      setLibraryLoading(false)
     }
   }
 
@@ -331,51 +277,108 @@ export function EditModuleView(props: {
     setContent(next)
   }
 
-  async function openLink(url: string) {
+  function deriveNameFromURL(rawURL: string): string {
     try {
-      const Safari = (globalThis as any).Safari
-      if (Safari?.openURL) {
-        const ok = await Safari.openURL(url)
-        if (!ok) throw new Error("打开 URL 失败")
-        return
-      }
-      if (Safari?.open) {
-        const ok = await Safari.open(url)
-        if (ok === false) throw new Error("打开 URL 失败")
-        return
-      }
-      const openURL = (globalThis as any).openURL
-      if (typeof openURL === "function") {
-        const ok = await openURL(url)
-        if (ok === false) throw new Error("打开 URL 失败")
-        return
-      }
-      throw new Error("无法打开 URL scheme：Safari.openURL/open/openURL 都不存在")
-    } catch (e: any) {
-      await Dialog.alert({ message: String(e?.message ?? e) })
+      const parsed = new URL(rawURL)
+      const last = parsed.pathname.split("/").filter(Boolean).pop() ?? ""
+      const value = decodeURIComponent(last).replace(/\.(?:sgmodule|plugin|conf)$/i, "").trim()
+      return value || "远程模块"
+    } catch {
+      return "远程模块"
     }
   }
 
-  async function onSearch() {
+  function deriveNameFromContent(rawContent: string): string {
+    const tagged = String(rawContent ?? "").match(/^\s*(?:#!|#)name\s*=\s*(.+?)\s*$/im)?.[1]
+    return String(tagged ?? "").trim() || "本地模块"
+  }
+
+  function setRemoteSource(rawURL: string) {
+    const value = String(rawURL ?? "").trim()
+    if (!value) return
+    setIsRemote(true)
+    setLink(value)
+    setContent("")
+    if (!name.trim()) setName(deriveNameFromURL(value))
+  }
+
+  async function openRemoteLinkInput() {
     const input = await Dialog.prompt({
-      title: "筛选模块",
-      message: "输入关键字（留空清除筛选）",
-      defaultValue: filterText,
-      placeholder: "名称关键词",
+      title: "远程链接",
+      message: "粘贴 HTTPS 模块链接或 Script-Hub 转换结果",
+      defaultValue: link,
+      placeholder: "https://",
     })
     if (input == null) return
-    setFilterText(input.trim())
+    setRemoteSource(input)
   }
 
-  const shownItems = useMemo(() => {
-    let list = libraryItems
-    if (showOnlyNew) {
-      list = list.filter((m) => !existingLinks.has(m.link))
+  async function openLocalFilePicker() {
+    try {
+      const picker: any = (globalThis as any).DocumentPicker
+      if (typeof picker?.pickFiles !== "function") {
+        await Dialog.alert({ message: "DocumentPicker.pickFiles 不可用，请使用文件分享导入" })
+        return
+      }
+      const files = await picker.pickFiles({
+        types: ["public.data", "public.text", "public.plain-text"],
+        allowsMultipleSelection: false,
+        shouldShowFileExtensions: true,
+      })
+      const filePath = Array.isArray(files) ? files[0] : undefined
+      if (!filePath) return
+      const fm: any = (globalThis as any).FileManager
+      if (typeof fm?.readAsString !== "function") throw new Error("FileManager.readAsString 不可用")
+      const path = String(filePath)
+      const text = String(await fm.readAsString(path) ?? "")
+      if (!text.trim()) throw new Error("所选文件没有可导入的内容")
+      setIsRemote(false)
+      setLink("")
+      setContent(text)
+      if (!name.trim()) {
+        const filename = path.split("/").pop() ?? ""
+        setName(filename.replace(/\.(?:sgmodule|plugin|conf|txt)$/i, "") || deriveNameFromContent(text))
+      }
+    } catch (e: any) {
+      await Dialog.alert({ title: "读取文件失败", message: String(e?.message ?? e) })
     }
-    if (!filterText) return list
-    const key = filterText.toLowerCase()
-    return list.filter((m) => m.name.toLowerCase().includes(key))
-  }, [libraryItems, filterText, showOnlyNew, existingLinks])
+  }
+
+  async function openClipboardImport() {
+    try {
+      const pasteboard: any = (globalThis as any).Pasteboard
+      let raw = ""
+      if (typeof pasteboard?.getString === "function") raw = String(await pasteboard.getString() ?? "")
+      else if (typeof pasteboard?.string === "function") raw = String(await pasteboard.string() ?? "")
+      else if (typeof pasteboard?.string === "string") raw = pasteboard.string
+
+      if (!raw.trim()) {
+        raw = String(await Dialog.prompt({
+          title: "剪贴板导入",
+          message: "请粘贴模块链接或模块内容",
+          placeholder: "https:// 或 [Rule] / [Script]",
+        }) ?? "")
+      }
+      const value = raw.trim()
+      if (!value) return
+      if (/^https?:\/\//i.test(value)) setRemoteSource(value)
+      else {
+        setIsRemote(false)
+        setLink("")
+        setContent(value)
+        if (!name.trim()) setName(deriveNameFromContent(value))
+      }
+    } catch (e: any) {
+      await Dialog.alert({ title: "读取剪贴板失败", message: String(e?.message ?? e) })
+    }
+  }
+
+  function restoreRecentImport(item: RecentImport) {
+    if (!item.link) return
+    setRemoteSource(item.link)
+    setName(item.name)
+    if (item.category) setCustomCategory(item.category)
+  }
 
   return (
     <NavigationStack>
@@ -501,101 +504,85 @@ export function EditModuleView(props: {
             </Section>
           ) : null}
 
-          {showLibrary ? (
-            <Section
-              header={(
-                <HStack>
-                  <Text>在线模块(来自</Text>
-                  <Button
-                    title="LoonKissSurge"
-                    action={() => {
-                      HapticFeedback.mediumImpact()
-                      openLink("https://github.com/QingRex/LoonKissSurge/")
-                    }}
-                  />
-                  <Text>)</Text>
-                  <Spacer />
-                  <Button
-                    title=""
-                    systemImage="magnifyingglass"
-                    action={() => {
-                      HapticFeedback.mediumImpact()
-                      onSearch()
-                    }}
-                  />
-                </HStack>
-              )}
-            >
-              {libraryLoading ? <Text>加载中...</Text> : null}
-              {libraryError ? <Text>{libraryError}</Text> : null}
-              {filterText ? (
-                <HStack>
-                  <Text>筛选：{filterText}</Text>
-                  <Spacer />
-                  <Button
-                    title="清除"
-                    action={() => {
-                      HapticFeedback.mediumImpact()
-                      setFilterText("")
-                    }}
-                  />
-                </HStack>
-              ) : null}
-              <Toggle
-                title="只看未添加"
-                value={showOnlyNew}
-                onChanged={(value: boolean) => {
-                  HapticFeedback.heavyImpact()
-                  setShowOnlyNew(value)
-                }}
-              />
-              <List listStyle="plain" frame={{ height: 360 }}>
-                {shownItems.map((item) => {
-                  const existed = existingLinks.has(item.link)
-                  return (
-                    <VStack
-                      key={item.link}
-                      listRowBackground={<EmptyView />}
-                      contextMenu={{
-                        menuItems: (
-                          <Group>
-                            <Button title="复制名称" action={() => Pasteboard.setString(item.name)} />
-                            <Button title="复制链接" action={() => Pasteboard.setString(item.link)} />
-                            <Button
-                              title="打开链接"
-                              action={() => {
-                                HapticFeedback.mediumImpact()
-                                openLink(item.link)
-                              }}
-                            />
-                          </Group>
-                        ),
-                      }}
-                    >
-                      <HStack padding={{ top: 8, bottom: 8 }}>
-                        <Text>{item.name}</Text>
-                        <Spacer />
-                        {existed ? (
-                          <Text foregroundStyle="secondaryLabel">已添加</Text>
-                          ) : (
-                            <Button
-                              title="添加"
-                              buttonStyle="borderedProminent"
-                              tint="systemGreen"
-                              action={() => {
-                                HapticFeedback.mediumImpact()
-                                setName(item.name)
-                                setLink(item.link)
-                                setIsRemote(true)
-                              }}
-                            />
-                          )}
-                      </HStack>
+          {!initial ? (
+            <>
+              <Section header={<Text>快捷导入</Text>}>
+                <QuickImportRow
+                  title="远程链接"
+                  subtitle="支持 HTTPS 模块链接或 Script-Hub 转换结果"
+                  systemImage="link"
+                  tint="systemBlue"
+                  onPress={openRemoteLinkInput}
+                />
+                <QuickImportRow
+                  title="本地文件"
+                  subtitle="从设备中选择 .sgmodule、.plugin 或文本文件"
+                  systemImage="doc"
+                  tint="systemPurple"
+                  onPress={openLocalFilePicker}
+                />
+                <QuickImportRow
+                  title="剪贴板"
+                  subtitle="识别剪贴板中的模块链接或模块内容"
+                  systemImage="doc.on.clipboard"
+                  tint="systemGreen"
+                  onPress={openClipboardImport}
+                />
+              </Section>
+
+              <Section
+                header={(
+                  <HStack>
+                    <Text>最近导入</Text>
+                    <Spacer />
+                    {recentImports.length ? (
+                      <Button
+                        title="清空"
+                        action={() => {
+                          HapticFeedback.mediumImpact()
+                          clearRecentImports()
+                          setRecentImports([])
+                        }}
+                      />
+                    ) : null}
+                  </HStack>
+                )}
+              >
+                {recentImports.length ? recentImports.slice(0, 3).map((item) => (
+                  <HStack key={`${item.link || item.name}-${item.importedAt}`} padding={{ top: 8, bottom: 8 }}>
+                    <Image
+                      systemName={item.link ? "arrow.down.circle.fill" : "doc.fill"}
+                      font={18}
+                      foregroundStyle={item.link ? "systemBlue" : "secondaryLabel"}
+                    />
+                    <VStack alignment="leading" spacing={2} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                      <Text lineLimit={1}>{item.name}</Text>
+                      <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>
+                        {item.category ? `分类：${item.category} · ` : ""}{relativeImportTime(item.importedAt)}
+                      </Text>
                     </VStack>
-                  )
-                })}
-              </List>
-            </Section>
+                    {item.link ? (
+                      <Button
+                        title="重新导入"
+                        buttonStyle="borderedProminent"
+                        tint="systemGreen"
+                        action={() => restoreRecentImport(item)}
+                      />
+                    ) : (
+                      <Text font="caption" foregroundStyle="secondaryLabel">本地模块</Text>
+                    )}
+                  </HStack>
+                )) : (
+                  <Text foregroundStyle="secondaryLabel">完成一次导入后，会在这里显示最近使用的模块。</Text>
+                )}
+              </Section>
+
+              <Section header={<Text>自定义来源</Text>}>
+                <Text foregroundStyle="secondaryLabel" lineLimit={4}>
+                  当前不内置第三方在线库。后续可添加自定义来源，并通过 Script-Hub 转换后导入 Surge。
+                </Text>
+              </Section>
+            </>
           ) : null}
         </Form>
       </VStack>

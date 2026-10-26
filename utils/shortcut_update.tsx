@@ -14,6 +14,7 @@ import {
 import { downloadModule, writeModuleText } from "./downloader"
 import { isSameRemoteUrl, parseScriptHubImport, sanitizeModuleName } from "./deep_link_import"
 import { withTimeout } from "./async"
+import { recordRecentImport } from "./recent_imports"
 
 type ShortcutOptions = {
   category?: string
@@ -207,6 +208,7 @@ async function runLocalFileImport(
     `读取导入结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${name}`,
   )
   if (saved?.category) persistCategory(saved.category)
+  recordRecentImport(saved ?? { name, link: "", category: existing?.category })
 
   log(`local import stage: write verified at ${result.path ?? "unknown"}`)
   return {
@@ -274,6 +276,11 @@ async function runScriptHubImport(
     `读取导入结果超时（${IMPORT_STAGE_TIMEOUT_MS / 1000}s）：${request.name}`,
   )
   if (saved?.category) persistCategory(saved.category)
+  recordRecentImport(saved ?? {
+    name: request.name,
+    link: request.url,
+    category: request.category ?? sameName?.category,
+  })
 
   const state = sameName ? "已更新" : "已导入"
   log(`import stage: write verified at ${result.path ?? "unknown"}`)

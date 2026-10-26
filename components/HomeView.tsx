@@ -55,6 +55,7 @@ import {
   type ModuleBackup,
 } from "../utils/backups"
 import { inspectModuleHealth } from "../utils/health"
+import { recordRecentImport } from "../utils/recent_imports"
 
 function ModuleIcon(props: { module: ModuleInfo }) {
   const [failed, setFailed] = useState(false)
@@ -160,6 +161,55 @@ function BatchMoveMenu(props: {
           }}
         />
       ))}
+    </Menu>
+  )
+}
+
+function BatchRemoteMenu(props: {
+  disabled: boolean
+  onSetEnabled: (enabled: boolean) => void | Promise<void>
+}) {
+  const foreground = props.disabled ? "secondaryLabel" : "systemBlue"
+
+  return (
+    <Menu
+      label={(
+        <VStack
+          frame={{ maxWidth: "infinity", minHeight: 46, alignment: "center" }}
+          padding={{ top: 3, bottom: 3 }}
+          spacing={2}
+        >
+          <Image systemName="antenna.radiowaves.left.and.right" font={15} foregroundStyle={foreground} />
+          <Text font="caption2" foregroundStyle={foreground} lineLimit={1}>
+            远程
+          </Text>
+        </VStack>
+      )}
+      disabled={props.disabled}
+      buttonStyle="borderless"
+      glassEffect
+      buttonBorderShape="roundedRectangle"
+      tint="systemBlue"
+      frame={{ maxWidth: "infinity", minHeight: 46 }}
+      listRowBackground={<EmptyView />}
+      listRowSeparator="hidden"
+    >
+      <Button
+        title="启用所选"
+        systemImage="checkmark.circle"
+        action={() => {
+          HapticFeedback.mediumImpact()
+          void props.onSetEnabled(true)
+        }}
+      />
+      <Button
+        title="停用所选"
+        systemImage="slash.circle"
+        action={() => {
+          HapticFeedback.mediumImpact()
+          void props.onSetEnabled(false)
+        }}
+      />
     </Menu>
   )
 }
@@ -422,6 +472,7 @@ export function HomeView() {
   }, [modules, filterCategory, filterDir, searchKey, baseDir])
   const selectedModules = filteredModules.filter((m) => selectedKeys.has(moduleKey(m)))
   const selectedDownloadableCount = selectedModules.filter((m) => !!m.link).length
+  const selectedRemoteCount = selectedModules.length
   const onlyLocalFiltered =
     filteredModules.length > 0 && filteredModules.every((m) => m.isLocal || !m.link)
   const remoteControlReady = !!String(cfg.remotePort ?? "").trim()
@@ -700,6 +751,7 @@ export function HomeView() {
       if (info.isLocal) {
         setStage(`保存模块：${info.name}`)
         await saveLocalModule(info, info.content ?? "")
+        recordRecentImport(info)
         setStage("添加完成（已保存）")
       } else {
         setStage(`下载模块：${info.name}`)
@@ -708,6 +760,7 @@ export function HomeView() {
           await Dialog.alert({ message: res.message ?? "下载失败" })
           setStage("添加完成（下载失败）")
         } else {
+          recordRecentImport(info)
           setStage("添加完成（已下载）")
         }
       }
@@ -993,7 +1046,10 @@ export function HomeView() {
             { ...m, saveDir: inferSaveDir(m), linkPrefix },
             sourceContent === undefined ? undefined : { content: sourceContent },
           )
-          if (res.ok) okCount += 1
+          if (res.ok) {
+            okCount += 1
+            recordRecentImport(m)
+          }
           else errors.push(`${m.name}: ${res.message ?? "下载失败"}`)
 
           completed += 1
@@ -1018,6 +1074,7 @@ export function HomeView() {
       }
       if (okCount > 0) {
         await syncMetadataIfNeeded()
+        await refreshRemoteModules(true, loadConfig())
       }
     } catch (e: any) {
       const msg = String(e?.message ?? e)
@@ -1138,6 +1195,75 @@ export function HomeView() {
     }
   }
 
+  async function setSelectedRemoteModulesEnabled(nextValue: boolean) {
+    if (!remoteControlReady) {
+      await Dialog.alert({ message: "请先配置 HTTP 远程控制端口" })
+      return
+    }
+    if (!selectedModules.length) {
+      await Dialog.alert({ message: "请先选择模块" })
+      return
+    }
+
+    const action = nextValue ? "启用" : "停用"
+    const confirmed = await Dialog.confirm({
+      title: `批量${action}远程模块`,
+      message: `将通过 Surge HTTP API ${action}已选的 ${selectedModules.length} 个模块？`,
+    })
+    if (!confirmed) return
+
+    setBusy(true)
+    setStage(`远程${action}中…`)
+    setProgress(null)
+    const errors: string[] = []
+    let completed = 0
+    let nextIndex = 0
+    try {
+      const total = selectedModules.length
+      const concurrency = Math.max(1, Math.min(cfg.downloadConcurrency || 3, total))
+      const updateProgress = () => {
+        setStage(`远程${action}：已完成 ${completed}/${total}`)
+        setProgress(completed / total)
+      }
+      updateProgress()
+
+      async function worker() {
+        for (;;) {
+          const index = nextIndex
+          nextIndex += 1
+          if (index >= total) return
+          const target = selectedModules[index]
+          const remoteName = getModuleRemoteName(target)
+          try {
+            await setRemoteModuleEnabled(cfg, remoteName, nextValue)
+          } catch (e: any) {
+            errors.push(`${remoteName}: ${String(e?.message ?? e)}`)
+          } finally {
+            completed += 1
+            updateProgress()
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: concurrency }, () => worker()))
+      await refreshRemoteModules(true, loadConfig())
+      setStage(`远程${action}完成：成功 ${total - errors.length}/${total}`)
+      if (errors.length) {
+        await Dialog.alert({
+          title: `部分${action}失败`,
+          message: errors.slice(0, 8).join("\n") + (errors.length > 8 ? `\n其余 ${errors.length - 8} 个失败已省略` : ""),
+        })
+      }
+    } catch (e: any) {
+      const message = String(e?.message ?? e)
+      setStage(`远程${action}失败：${message}`)
+      await Dialog.alert({ title: `远程${action}失败`, message })
+    } finally {
+      setBusy(false)
+      setProgress(null)
+    }
+  }
+
   const fixedStatusPanel = (
     <VStack
       spacing={6}
@@ -1213,6 +1339,12 @@ export function HomeView() {
             disabled={busy || selectedModules.length === 0}
             targets={moveTargets}
             onMove={moveSelectedTo}
+          />
+        </GridRow>
+        <GridRow>
+          <BatchRemoteMenu
+            disabled={busy || !remoteControlReady || selectedRemoteCount === 0}
+            onSetEnabled={setSelectedRemoteModulesEnabled}
           />
           <BatchCompactButton
             title="删除"

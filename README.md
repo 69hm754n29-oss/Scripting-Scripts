@@ -22,6 +22,8 @@ https://github.com/ranzhigg/Scripting-Scripts
 - 批量或单个更新远程模块
 - 从 Script-Hub 转换结果导入本地 Surge 模块
 - 从 iOS“文件”分享 `.sgmodule` 文件并直接写入 Surge 目录
+- 添加模块页提供远程链接、本地文件和剪贴板三种快捷导入入口
+- 记录最近导入的模块，方便重新载入远程链接
 - 支持子目录、模块重命名、编辑和删除
 - 支持快捷指令和可选的 Surge HTTP 远程控制
 - 写入后自动检查目标文件，避免导入结果不明确
@@ -36,6 +38,7 @@ https://github.com/ranzhigg/Scripting-Scripts
 - 首次运行时在脚本设置中选择 Surge 的模块目录
 - 在线转换导入需要搭配 **Script-Hub 测试版**，并启用对应模块和重写
 - Script-Hub 中填写的 Scripting 脚本名必须与 Scripting 里显示的名称完全一致，默认是 `Surge模块管理`
+- 不内置第三方在线模块库；Loon/其他来源需要先提供可访问的模块直链，后续再通过 Script-Hub 转换
 
 脚本本身不需要 Scripting Pro API，也不需要 Mac Surge、Node.js 或 Scriptable。普通版 Scripting 即可运行；Scriptable 仅作为另一种可选导入方式。
 
@@ -80,6 +83,13 @@ https://github.com/ranzhigg/Scripting-Scripts
 - 模块名称相同但来源不同的时候，脚本会提示确认，不会静默覆盖。
 - 点击工具栏的盾牌图标可运行健康检查。
 
+添加模块页的“快捷导入”支持：
+
+- 远程链接：填写 HTTPS 模块地址或 Script-Hub 转换结果
+- 本地文件：从系统文件选择器读取 `.sgmodule`、`.plugin` 或文本文件
+- 剪贴板：自动识别模块链接或模块内容
+- 最近导入：只保存本地的名称、来源链接、分类和时间，不会内置或抓取第三方在线库
+
 ### 快捷指令
 
 可以通过 Scripting 的“运行脚本”调用：
@@ -119,6 +129,6 @@ Script-Hub 和“文件”分享属于后台 Intent 导入，不能在系统跳�
 
 ## 版本
 
-当前版本：`3.0.22`
+当前版本：`3.0.23`
 
 本仓库只维护这一个 Scripting 脚本。

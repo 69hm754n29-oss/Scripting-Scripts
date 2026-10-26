@@ -3,6 +3,11 @@ import { withTimeout } from "./async"
 
 const REMOTE_REQUEST_TIMEOUT_MS = 8 * 1000
 
+export type RemoteConnectionResult = {
+  latencyMs: number
+  enabledCount: number
+}
+
 export function getRemoteBaseURL(cfg: AppConfig): string {
   const host = String(cfg.remoteHost ?? "http://127.0.0.1").trim() || "http://127.0.0.1"
   const port = String(cfg.remotePort ?? "").trim()
@@ -53,6 +58,21 @@ export async function fetchEnabledModuleNames(cfg: AppConfig): Promise<Set<strin
   if (!res?.ok) throw new Error(`请求失败：${res?.status ?? "unknown"}`)
   const data = await res.json()
   return parseEnabledNames(data)
+}
+
+/**
+ * Verify the same read endpoint used by the module status badges. Keeping the
+ * test on this path avoids claiming that the port is healthy when only a
+ * different endpoint happens to respond.
+ */
+export async function testRemoteConnection(cfg: AppConfig): Promise<RemoteConnectionResult> {
+  if (!getRemoteBaseURL(cfg)) throw new Error("请先配置 HTTP 远程控制端口")
+  const startedAt = Date.now()
+  const enabled = await fetchEnabledModuleNames(cfg)
+  return {
+    latencyMs: Math.max(0, Date.now() - startedAt),
+    enabledCount: enabled.size,
+  }
 }
 
 export async function setRemoteModuleEnabled(

@@ -13,6 +13,7 @@ import {
 } from "scripting"
 
 import { loadConfig, saveConfig, type AppConfig } from "../utils/config"
+import { testRemoteConnection } from "../utils/remote_control"
 
 export function RemoteControlView(props: {
   initial?: AppConfig
@@ -20,6 +21,31 @@ export function RemoteControlView(props: {
 }) {
   const dismiss = Navigation.useDismiss()
   const [cfg, setCfg] = useState<AppConfig>(props.initial ?? loadConfig())
+  const [testing, setTesting] = useState(false)
+
+  async function testConnection() {
+    if (testing) return
+    setTesting(true)
+    try {
+      const result = await testRemoteConnection({
+        ...cfg,
+        remoteHost: String(cfg.remoteHost ?? "").trim() || "http://127.0.0.1",
+        remotePort: String(cfg.remotePort ?? "").trim(),
+        remotePassword: String(cfg.remotePassword ?? ""),
+      })
+      await Dialog.alert({
+        title: "连接成功",
+        message: `响应 ${result.latencyMs} ms\n当前已启用模块 ${result.enabledCount} 个`,
+      })
+    } catch (e: any) {
+      await Dialog.alert({
+        title: "连接失败",
+        message: String(e?.message ?? e),
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   async function saveAndClose() {
     try {
@@ -94,6 +120,18 @@ export function RemoteControlView(props: {
                 frame={{ maxWidth: "infinity" as any, alignment: "leading" as any }}
               />
             </HStack>
+            <Button
+              title={testing ? "测试连接中…" : "测试连接"}
+              systemImage="antenna.radiowaves.left.and.right"
+              disabled={testing}
+              action={() => {
+                HapticFeedback.mediumImpact()
+                void testConnection()
+              }}
+            />
+            <Text font="caption" foregroundStyle="secondaryLabel">
+              使用 Surge HTTP API 的模块状态接口进行测试，不会修改模块开关。
+            </Text>
           </Section>
         </Form>
       </VStack>
